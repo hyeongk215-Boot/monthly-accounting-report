@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회계관리</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 data-i18n="appTitle">회계관리</h1>
+  <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+    <nav class="nav-links">
+      <a href="index.html" data-i18n="backBtn">← 뒤로</a>
+    </nav>
+    <div class="lang-switch">
+      <button class="lang-btn" data-lang="ko">한국어</button>
+      <button class="lang-btn" data-lang="zh">中文</button>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2 data-i18n="submitHeading">재무제표 입력</h2>
+    <div class="context-bar" id="contextBar"></div>
+    <div class="note-box" id="closedBanner" style="display:none;"></div>
+
+    <div class="tab-bar" id="tabBar">
+      <button class="tab-btn tab-active" data-tab="PL" data-i18n="tabPL">손익계산서</button>
+      <button class="tab-btn" data-tab="BS" data-i18n="tabBS">재무상태표</button>
+      <button class="tab-btn" data-tab="CF" data-i18n="tabCF">현금흐름표</button>
+    </div>
+    <div id="tabPanels"></div>
+  </div>
+</main>
+<footer>회계관리 · China Branch Accounting Consolidation</footer>
+<div class="toast" id="toast"></div>
+
+<script src="js/config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/common.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="js/app-submit.js"></script>
+</body>
+</html>

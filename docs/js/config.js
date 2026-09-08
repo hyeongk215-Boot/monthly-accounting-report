@@ -1,0 +1,37 @@
+// ===== 이 파일만 수정하면 됩니다 =====
+window.APP_CONFIG = {
+  // 관리부 ERP 전용 Supabase 프로젝트 (접대비와는 별도 프로젝트 - Project Settings > API에서 확인).
+  SUPABASE_URL: "https://pobpxmqobeqrvuncobnh.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_bMGDHv8z9Shw1IJ39Wj10w_0O3G2g6U",
+
+  // 법인 목록 (ko 값이 저장 기준 값입니다. zh는 화면 표시용 번역만 담당)
+  // 접대비의 CORPORATIONS와 동일하되, 회계 제출은 항상 실제 법인 단위이므로 "기타"는 두지 않습니다.
+  CORPORATIONS: [
+    { ko: "YJC 포워딩", zh: "裕佳昌 货代" },
+    { ko: "상해물류센터", zh: "上海 物流中心" },
+    { ko: "흥아물류", zh: "兴亚物流" },
+    { ko: "윤봉물류", zh: "润峰物流" },
+    { ko: "청도 CY", zh: "青岛 CY" },
+    { ko: "창씽 CY", zh: "长兴 CY" }
+  ],
+
+  // 지점(사무소) 목록 - 접대비의 REGIONS 목록과 동일 개념. 한 법인 아래 여러 지점이 있을 수 있고,
+  // 회계관리는 지점별로 입력받아 법인 단위로 통합합니다.
+  OFFICES: [
+    { ko: "상해", zh: "上海" },
+    { ko: "닝보", zh: "宁波" },
+    { ko: "남경", zh: "南京" },
+    { ko: "충칭", zh: "重庆" },
+    { ko: "천진", zh: "天津" },
+    { ko: "대련", zh: "大连" },
+    { ko: "청도", zh: "青岛" },
+    { ko: "위해", zh: "威海" },
+    { ko: "연태", zh: "烟台" },
+    { ko: "심천", zh: "深圳" },
+    { ko: "광주", zh: "广州" },
+    { ko: "홍콩", zh: "香港" },
+    { ko: "연운항", zh: "连云港" },
+    { ko: "하문", zh: "厦门" },
+    { ko: "기타", zh: "其他" }
+  ]
+};

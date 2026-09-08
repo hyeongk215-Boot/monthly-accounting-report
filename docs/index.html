@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회계관리</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 data-i18n="appTitle">회계관리</h1>
+  <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+    <nav class="nav-links">
+      <a href="admin.html" data-i18n="navAdmin">본사용: 관리자 화면</a>
+    </nav>
+    <div class="lang-switch">
+      <button class="lang-btn" data-lang="ko">한국어</button>
+      <button class="lang-btn" data-lang="zh">中文</button>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2 data-i18n="indexHeading">월별 재무제표 제출</h2>
+    <p class="desc" data-i18n="indexDesc"></p>
+    <div class="form-grid">
+      <div>
+        <label data-i18n="corp">법인</label>
+        <select id="corp"></select>
+      </div>
+      <div>
+        <label data-i18n="office">지점</label>
+        <select id="office"></select>
+      </div>
+      <div>
+        <label data-i18n="yearmonth">적용년도월</label>
+        <select id="yearmonth"></select>
+      </div>
+      <div>
+        <label data-i18n="submitterName">담당자 이름</label>
+        <input type="text" id="submitter">
+      </div>
+      <div>
+        <label data-i18n="accessKeyLabel">접근키</label>
+        <input type="password" id="accessKey">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" id="startBtn" data-i18n="startBtn">입력 시작</button>
+    </div>
+  </div>
+</main>
+<footer>회계관리 · China Branch Accounting Consolidation</footer>
+<div class="toast" id="toast"></div>
+
+<script src="js/config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/common.js"></script>
+<script>
+function fillSelect(sel, list, placeholderKey) {
+  var prev = sel.value;
+  sel.innerHTML = "";
+  var ph = document.createElement("option");
+  ph.value = ""; ph.textContent = t(placeholderKey);
+  sel.appendChild(ph);
+  list.forEach(function (v) {
+    var o = document.createElement("option");
+    o.value = v; o.textContent = v;
+    sel.appendChild(o);
+  });
+  if (prev) sel.value = prev;
+}
+function fillLocalizedSelect(sel, list, placeholderKey) {
+  var prev = sel.value;
+  var lang = getLang();
+  sel.innerHTML = "";
+  var ph = document.createElement("option");
+  ph.value = ""; ph.textContent = t(placeholderKey);
+  sel.appendChild(ph);
+  list.forEach(function (item) {
+    var o = document.createElement("option");
+    o.value = item.ko; o.textContent = item[lang] || item.ko;
+    sel.appendChild(o);
+  });
+  if (prev) sel.value = prev;
+}
+function showToast(msg) {
+  var el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  setTimeout(function () { el.classList.remove("show"); }, 3000);
+}
+function init() {
+  fillLocalizedSelect(document.getElementById("corp"), window.APP_CONFIG.CORPORATIONS, "selectPlaceholder");
+  fillLocalizedSelect(document.getElementById("office"), window.APP_CONFIG.OFFICES, "selectPlaceholder");
+  var ymSel = document.getElementById("yearmonth");
+  var hadYm = ymSel.value;
+  fillSelect(ymSel, window.generateYearMonths(), "selectPlaceholder");
+  ymSel.value = hadYm || window.defaultYearMonth();
+}
+document.addEventListener("DOMContentLoaded", function () {
+  init();
+  document.addEventListener("langchange", init);
+
+  document.getElementById("startBtn").addEventListener("click", function () {
+    var corp = document.getElementById("corp").value;
+    var office = document.getElementById("office").value;
+    var yearmonth = document.getElementById("yearmonth").value;
+    var submitter = document.getElementById("submitter").value.trim();
+    var accessKey = document.getElementById("accessKey").value;
+    if (!corp || !office || !yearmonth || !submitter || !accessKey) {
+      showToast(t("requiredWarning"));
+      return;
+    }
+    var client = window.getSupabaseClient();
+    if (!client) {
+      showToast(t("submitFail"));
+      return;
+    }
+    var btn = this;
+    btn.disabled = true;
+    client.rpc("verify_access_key", { p_key: accessKey }).then(function (res) {
+      btn.disabled = false;
+      if (res.error || !res.data || !res.data.length) {
+        showToast(t("invalidKey"));
+        return;
+      }
+      var info = res.data[0];
+      var finalCorp = corp;
+      var finalOffice = office;
+      if (info.branch_scope && info.branch_scope !== corp) {
+        finalCorp = info.branch_scope;
+        showToast(t("keyMismatchBranch", { branch: window.corpLabel(info.branch_scope) }));
+      }
+      if (info.office_scope && info.office_scope !== office) {
+        finalOffice = info.office_scope;
+        showToast(t("keyMismatchOffice", { office: window.officeLabel(info.office_scope) }));
+      }
+      window.saveContext({
+        corp: finalCorp,
+        office: finalOffice,
+        yearmonth: yearmonth,
+        submitter: submitter,
+        accessKey: accessKey,
+        role: info.role,
+        branchScope: info.branch_scope,
+        officeScope: info.office_scope
+      });
+      window.location.href = "submit.html";
+    }).catch(function () {
+      btn.disabled = false;
+      showToast(t("invalidKey"));
+    });
+  });
+});
+</script>
+</body>
+</html>

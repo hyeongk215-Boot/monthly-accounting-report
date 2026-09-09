@@ -69,17 +69,23 @@ $$;
 -- =====================================================================
 
 -- 계정과목 (실제 표준 COA는 admin.html에서 엑셀 업로드로 통째로 교체 가능)
+-- code는 PL_KR과 PL이 같은 AC CODE(예: 500000)를 공유할 수 있어 statement_type과 함께 복합키로 관리합니다.
 create table if not exists acct_accounts (
-  code text primary key,
+  code text not null,
   name_ko text not null,
   name_zh text not null,
-  statement_type text not null check (statement_type in ('PL','BS','CF')),
+  statement_type text not null check (statement_type in ('PL','PL_KR','BS','CF')),
   category text not null,
   display_order integer not null default 0,
   is_subtotal boolean not null default false,
   active boolean not null default true,
   updated_at timestamptz not null default now()
 );
+alter table acct_accounts drop constraint if exists acct_accounts_pkey;
+alter table acct_accounts add primary key (code, statement_type);
+alter table acct_accounts drop constraint if exists acct_accounts_statement_type_check;
+alter table acct_accounts add constraint acct_accounts_statement_type_check
+  check (statement_type in ('PL','PL_KR','BS','CF'));
 alter table acct_accounts enable row level security;
 revoke all on acct_accounts from anon, authenticated;
 
@@ -125,6 +131,21 @@ create index if not exists idx_acct_lines_ym on acct_statement_lines(yearmonth);
 create index if not exists idx_acct_lines_corp_ym on acct_statement_lines(corp, yearmonth);
 alter table acct_statement_lines enable row level security;
 revoke all on acct_statement_lines from anon, authenticated;
+
+-- PL(한국) 제출 시 같이 입력하는 비재무 수기값 (인원수) + 접대비 월간 합계(접대비 앱은 별도
+-- Supabase 프로젝트라 DB 조인이 불가능해 지점이 회계관리 쪽에 수기로 입력합니다).
+create table if not exists acct_pl_kr_extra (
+  corp text not null,
+  office text not null default '',
+  yearmonth text not null,
+  headcount integer,
+  entertainment_cny numeric,
+  submitted_by text,
+  submitted_at timestamptz not null default now(),
+  primary key (corp, office, yearmonth)
+);
+alter table acct_pl_kr_extra enable row level security;
+revoke all on acct_pl_kr_extra from anon, authenticated;
 
 -- =====================================================================
 -- RPC 함수
@@ -328,6 +349,80 @@ begin
 end;
 $$;
 
+-- PL(한국) 부가 수기입력(인원수/접대비) 제출. office_scope가 있으면 자기 지점만 가능.
+create or replace function submit_pl_kr_extra(
+  p_access_key text,
+  p_corp text,
+  p_office text,
+  p_yearmonth text,
+  p_headcount integer,
+  p_entertainment_cny numeric,
+  p_submitted_by text
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_branch_scope text;
+  v_office_scope text;
+begin
+  select role, branch_scope, office_scope into v_role, v_branch_scope, v_office_scope from verify_access_key(p_access_key);
+
+  if v_branch_scope is not null and p_corp is distinct from v_branch_scope then
+    raise exception 'unauthorized_branch';
+  end if;
+  if v_office_scope is not null and p_office is distinct from v_office_scope then
+    raise exception 'unauthorized_office';
+  end if;
+  if exists (select 1 from acct_closed_months where yearmonth = p_yearmonth) then
+    raise exception 'month_closed';
+  end if;
+  if p_corp is null or p_office is null or p_yearmonth is null then
+    raise exception 'invalid_payload';
+  end if;
+
+  insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, submitted_by, submitted_at)
+  values (p_corp, p_office, p_yearmonth, p_headcount, p_entertainment_cny, p_submitted_by, now())
+  on conflict (corp, office, yearmonth) do update
+    set headcount = excluded.headcount, entertainment_cny = excluded.entertainment_cny,
+        submitted_by = excluded.submitted_by, submitted_at = now();
+end;
+$$;
+
+-- PL(한국) 부가 수기입력 조회 (제출화면 프리필용)
+create or replace function get_pl_kr_extra(
+  p_access_key text,
+  p_corp text,
+  p_office text,
+  p_yearmonth text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_branch_scope text;
+  v_office_scope text;
+  v_corp text;
+  v_office text;
+begin
+  select role, branch_scope, office_scope into v_role, v_branch_scope, v_office_scope from verify_access_key(p_access_key);
+  v_corp := coalesce(v_branch_scope, p_corp);
+  v_office := coalesce(v_office_scope, p_office);
+
+  return coalesce((
+    select to_jsonb(x) from (
+      select headcount, entertainment_cny as "entertainmentCny"
+      from acct_pl_kr_extra
+      where corp = v_corp and office = v_office and yearmonth = p_yearmonth
+    ) x
+  ), '{}'::jsonb);
+end;
+$$;
+
 -- 본사 집계 조회 (system_admin/finance 전용) - 지점별 상세 (office 포함)
 create or replace function get_aggregate(
   p_access_key text,
@@ -341,6 +436,7 @@ declare
   v_role text;
   v_lines jsonb;
   v_submissions jsonb;
+  v_extras jsonb;
 begin
   select role into v_role from verify_access_key(p_access_key);
   if v_role not in ('system_admin', 'finance') then
@@ -368,7 +464,14 @@ begin
     order by corp, office, statement_type, submitted_at desc
   ) s;
 
-  return jsonb_build_object('lines', v_lines, 'submissions', v_submissions);
+  select coalesce(jsonb_agg(to_jsonb(x) order by x.corp, x.office), '[]'::jsonb)
+    into v_extras
+  from (
+    select corp, office, headcount, entertainment_cny as "entertainmentCny"
+    from acct_pl_kr_extra where yearmonth = p_yearmonth
+  ) x;
+
+  return jsonb_build_object('lines', v_lines, 'submissions', v_submissions, 'extras', v_extras);
 end;
 $$;
 
@@ -447,7 +550,7 @@ as $$
 declare
   v_role text;
   v_row jsonb;
-  v_new_codes text[];
+  v_new_pairs text[];
   v_count integer := 0;
 begin
   select role into v_role from verify_access_key(p_access_key);
@@ -458,10 +561,11 @@ begin
     raise exception 'invalid_payload';
   end if;
 
-  select array_agg(x->>'code') into v_new_codes from jsonb_array_elements(p_accounts) x;
+  select array_agg((x->>'code') || '::' || (x->>'statementType')) into v_new_pairs
+  from jsonb_array_elements(p_accounts) x;
 
   update acct_accounts set active = false
-   where code <> all(v_new_codes);
+   where (code || '::' || statement_type) <> all(v_new_pairs);
 
   for v_row in select * from jsonb_array_elements(p_accounts)
   loop
@@ -471,8 +575,8 @@ begin
       v_row->>'category', coalesce(nullif(v_row->>'displayOrder','')::integer, 0),
       coalesce((v_row->>'isSubtotal')::boolean, false), true, now()
     )
-    on conflict (code) do update
-      set name_ko = excluded.name_ko, name_zh = excluded.name_zh, statement_type = excluded.statement_type,
+    on conflict (code, statement_type) do update
+      set name_ko = excluded.name_ko, name_zh = excluded.name_zh,
           category = excluded.category, display_order = excluded.display_order,
           is_subtotal = excluded.is_subtotal, active = true, updated_at = now();
     v_count := v_count + 1;
@@ -490,6 +594,8 @@ grant execute on function set_exchange_rate(text, text, numeric) to anon, authen
 grant execute on function submit_statement(text, text, text, text, text, text, jsonb) to anon, authenticated;
 grant execute on function get_statement(text, text, text, text) to anon, authenticated;
 grant execute on function get_consolidated_statement(text, text, text) to anon, authenticated;
+grant execute on function submit_pl_kr_extra(text, text, text, text, integer, numeric, text) to anon, authenticated;
+grant execute on function get_pl_kr_extra(text, text, text, text) to anon, authenticated;
 grant execute on function get_aggregate(text, text) to anon, authenticated;
 grant execute on function close_month(text, text) to anon, authenticated;
 grant execute on function reopen_month(text, text) to anon, authenticated;

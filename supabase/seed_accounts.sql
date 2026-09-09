@@ -35,6 +35,20 @@ insert into acct_accounts (code, name_ko, name_zh, statement_type, category, dis
   ('905000', '법인세비용', '所得税', 'PL', '손익', 150, false),
   ('999999', '당기순이익', '净利润', 'PL', '손익', 160, true),
 
+  -- ===== PL_KR: 한국회계기준 손익계산서 (10개, PL과 같은 AC CODE지만 별도 statement_type) =====
+  -- 본사에 보고하는 공식 "영업이익"은 이 표의 799999(관리비까지만 반영, 기타영업수익/비용 제외)
+  -- 입니다 — 일반 PL(중국 분류)의 799999(营业利润)와는 계산 범위가 달라 값이 다를 수 있습니다.
+  ('500000', '매출액', '主营业务收入', 'PL_KR', '매출', 10, false),
+  ('600000', '매출원가', '主营业务成本', 'PL_KR', '매출원가', 20, false),
+  ('699999', '매출이익', '主营业务利润', 'PL_KR', '매출', 30, true),
+  ('700000', '관리비', '管理费用', 'PL_KR', '판관비', 40, false),
+  ('799999', '영업이익', '营业利润', 'PL_KR', '손익', 50, true),
+  ('708100-1', '기타영업수익', '其他业务收入', 'PL_KR', '영업외', 60, false),
+  ('708200-1', '기타영업비용', '其他业务支出', 'PL_KR', '영업외', 70, false),
+  ('900000', '세전이익', '利润总额', 'PL_KR', '손익', 80, true),
+  ('905001', '법인세비용', '企业所得税', 'PL_KR', '손익', 90, false),
+  ('999999', '당기순이익', '净利润', 'PL_KR', '손익', 100, true),
+
   -- ===== BS: 재무상태표 - 자산 (좌측 블록, 23개 실계정 + 5개 소계) =====
   ('BS-L02', '현금', '现金', 'BS', '유동자산', 200, false),
   ('BS-L03', '은행예금', '银行存款', 'BS', '유동자산', 210, false),
@@ -99,8 +113,8 @@ insert into acct_accounts (code, name_ko, name_zh, statement_type, category, dis
   ('CF-020', '투자활동현금흐름', '投资活动现金流量', 'CF', '투자활동', 810, false),
   ('CF-030', '재무활동현금흐름', '筹资活动现金流量', 'CF', '재무활동', 820, false),
   ('CF-040', '현금및현금성자산의증가', '现金及现金等价物净增加额', 'CF', '현금증감', 830, true)
-on conflict (code) do update
-  set name_ko = excluded.name_ko, name_zh = excluded.name_zh, statement_type = excluded.statement_type,
+on conflict (code, statement_type) do update
+  set name_ko = excluded.name_ko, name_zh = excluded.name_zh,
       category = excluded.category, display_order = excluded.display_order, is_subtotal = excluded.is_subtotal,
       active = true, updated_at = now();
 

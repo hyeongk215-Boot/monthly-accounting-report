@@ -1,5 +1,5 @@
 (function () {
-  var STATEMENT_TYPES = ["PL", "BS", "CF"];
+  var STATEMENT_TYPES = ["PL", "PL_KR", "BS", "CF"];
   var ctx = window.loadContext();
   if (!ctx) {
     window.location.href = "index.html";
@@ -8,9 +8,11 @@
 
   var client = window.getSupabaseClient();
   var accounts = [];          // 전체 계정과목 (get_accounts)
-  var existingLines = {};     // accountCode -> amountCny (get_statement 프리필)
+  // PL과 PL_KR이 같은 AC CODE(예: 500000)를 공유하므로 "statementType::code"로 키를 분리합니다.
+  var existingLines = {};     // "type::accountCode" -> amountCny (get_statement 프리필)
   var exchangeRate = null;    // 이 달 환율 (없으면 null)
   var closedMonths = [];
+  var plKrExtra = {};         // { headcount, entertainmentCny } (get_pl_kr_extra 프리필)
 
   function showToast(msg) {
     var el = document.getElementById("toast");
@@ -33,12 +35,25 @@
   }
 
   function statementTabLabel(type) {
-    return type === "PL" ? t("tabPL") : (type === "BS" ? t("tabBS") : t("tabCF"));
+    if (type === "PL") return t("tabPL");
+    if (type === "PL_KR") return t("tabPLKR");
+    if (type === "BS") return t("tabBS");
+    return t("tabCF");
+  }
+
+  function plKrExtraHtml() {
+    return (
+      '<div class="note-box">' + t("plKrExtraNote") + "</div>" +
+      '<div class="btn-row" style="align-items:center;">' +
+        "<label>" + t("headcountLabel") + " <input type='number' step='1' id='plKrHeadcount' style='width:80px;'></label>" +
+        "<label>" + t("entertainmentLabel") + " <input type='number' step='0.01' id='plKrEntertainment' style='width:120px;'></label>" +
+      "</div>"
+    );
   }
 
   function panelHtml(type) {
     var standardUploadHtml = "";
-    if (type === "PL" || type === "BS") {
+    if (type === "PL" || type === "PL_KR" || type === "BS") {
       standardUploadHtml =
         '<div class="note-box">' + t("uploadStandardNote") + "</div>" +
         '<div class="btn-row" style="align-items:center;">' +
@@ -49,6 +64,7 @@
     return (
       '<div class="tab-panel' + (type === "PL" ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
+        (type === "PL_KR" ? plKrExtraHtml() : "") +
         standardUploadHtml +
         '<div class="btn-row" style="align-items:center;">' +
           '<button class="btn-secondary" data-action="template" data-type="' + type + '">' + t("downloadTemplateBtn") + "</button>" +
@@ -82,7 +98,8 @@
       var tr = document.createElement("tr");
       if (a.isSubtotal) tr.className = "subtotal-row";
       var draftVal = draft && draft.values ? draft.values[a.code] : undefined;
-      var initial = draftVal !== undefined ? draftVal : (existingLines[a.code] !== undefined ? existingLines[a.code] : "");
+      var lineKey = type + "::" + a.code;
+      var initial = draftVal !== undefined ? draftVal : (existingLines[lineKey] !== undefined ? existingLines[lineKey] : "");
       tr.innerHTML =
         "<td style='text-align:left;'>" + accountLabel(a) + "</td>" +
         "<td><input type='number' step='0.01' data-code='" + a.code + "' class='amt-cny' value='" + initial + "'></td>" +
@@ -180,12 +197,12 @@
       return;
     }
     var file = input.files[0];
-    var parsePromise = type === "PL" ? window.parseStandardPlReport(file) : window.parseStandardBsReport(file);
+    var parsePromise = (type === "PL" || type === "PL_KR") ? window.parseStandardPlReport(file) : window.parseStandardBsReport(file);
     parsePromise.then(function (rows) {
       var n = 0;
-      if (type === "PL") {
+      if (type === "PL" || type === "PL_KR") {
         rows.forEach(function (r) {
-          if (applyUpload("PL", r.accountCode, r.amountCny)) n++;
+          if (applyUpload(type, r.accountCode, r.amountCny)) n++;
         });
       } else {
         var bsAccounts = accounts.filter(function (a) { return a.statementType === "BS"; });
@@ -241,7 +258,29 @@
       }
       window.clearDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type));
       updateDraftInfo(type, null);
-      showToast(t("submitSuccess"));
+      if (type === "PL_KR") {
+        submitPlKrExtra();
+      } else {
+        showToast(t("submitSuccess"));
+      }
+    }).catch(function () {
+      showToast(t("submitFail"));
+    });
+  }
+
+  function submitPlKrExtra() {
+    var hcEl = document.getElementById("plKrHeadcount");
+    var entEl = document.getElementById("plKrEntertainment");
+    client.rpc("submit_pl_kr_extra", {
+      p_access_key: ctx.accessKey,
+      p_corp: ctx.corp,
+      p_office: ctx.office,
+      p_yearmonth: ctx.yearmonth,
+      p_headcount: hcEl && hcEl.value !== "" ? Number(hcEl.value) : null,
+      p_entertainment_cny: entEl && entEl.value !== "" ? Number(entEl.value) : null,
+      p_submitted_by: ctx.submitter
+    }).then(function (res) {
+      showToast(res.error ? t("submitFail") : t("submitSuccess"));
     }).catch(function () {
       showToast(t("submitFail"));
     });
@@ -267,15 +306,21 @@
       client.rpc("get_accounts", {}),
       client.rpc("get_statement", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
       client.rpc("get_exchange_rate", { p_yearmonth: ctx.yearmonth }),
-      window.fetchClosedMonths()
+      window.fetchClosedMonths(),
+      client.rpc("get_pl_kr_extra", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
     ]).then(function (results) {
       accounts = (results[0].data || []).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
-      (results[1].data || []).forEach(function (l) { existingLines[l.accountCode] = l.amountCny; });
+      (results[1].data || []).forEach(function (l) { existingLines[l.statementType + "::" + l.accountCode] = l.amountCny; });
       exchangeRate = results[2].data;
       closedMonths = results[3] || [];
+      plKrExtra = results[4].data || {};
       renderContextBar();
       renderPanels();
       applyClosedState();
+      var hcEl = document.getElementById("plKrHeadcount");
+      var entEl = document.getElementById("plKrEntertainment");
+      if (hcEl && plKrExtra.headcount != null) hcEl.value = plKrExtra.headcount;
+      if (entEl && plKrExtra.entertainmentCny != null) entEl.value = plKrExtra.entertainmentCny;
     }).catch(function () {
       showToast(t("submitFail"));
     });

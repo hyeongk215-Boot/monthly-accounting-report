@@ -1,5 +1,5 @@
 (function () {
-  var STATEMENT_TYPES = ["PL", "BS", "CF"];
+  var STATEMENT_TYPES = ["PL", "PL_KR", "BS", "CF"];
   var lastData = null;      // { lines: [...], submissions: [...] }
   var corpFilter = null;
   var typeFilter = null;
@@ -30,7 +30,10 @@
   }
 
   function statementLabel(type) {
-    return type === "PL" ? t("tabPL") : (type === "BS" ? t("tabBS") : t("tabCF"));
+    if (type === "PL") return t("tabPL");
+    if (type === "PL_KR") return t("tabPLKR");
+    if (type === "BS") return t("tabBS");
+    return t("tabCF");
   }
 
   function filteredLines() {
@@ -40,8 +43,12 @@
     return lines;
   }
 
-  function accountLabel(code) {
-    var a = accountsCache.filter(function (x) { return x.code === code; })[0];
+  // PL과 PL_KR이 같은 code(예: 500000)를 공유하므로 statementType까지 같이 매칭해야 합니다.
+  function accountLabel(code, statementType) {
+    var candidates = accountsCache.filter(function (x) { return x.code === code; });
+    var a = candidates.length > 1 && statementType
+      ? (candidates.filter(function (x) { return x.statementType === statementType; })[0] || candidates[0])
+      : candidates[0];
     if (!a) return code;
     return getLang() === "zh" ? a.nameZh : a.nameKo;
   }
@@ -50,6 +57,7 @@
     var grid = document.getElementById("statusGrid");
     grid.innerHTML = "";
     var submitted = {};
+    var extras = {};
     var pairs = [];
     var seenPairs = {};
     ((lastData && lastData.submissions) || []).forEach(function (s) {
@@ -59,6 +67,9 @@
         seenPairs[pairKey] = true;
         pairs.push({ corp: s.corp, office: s.office });
       }
+    });
+    ((lastData && lastData.extras) || []).forEach(function (x) {
+      extras[x.corp + "::" + x.office] = x;
     });
     pairs.sort(function (a, b) {
       return (a.corp + a.office).localeCompare(b.corp + b.office);
@@ -75,6 +86,13 @@
           (s ? "#f2fbf3;color:var(--ok);" : "#fdf3f2;color:var(--danger);") + "'>" +
           statementLabel(type) + ": " + (s ? t("adminSubmitted") : t("adminNotSubmitted")) + "</span>";
       }).join(" ");
+      var extra = extras[pair.corp + "::" + pair.office];
+      if (extra) {
+        html += "<br><span style='font-size:11px;color:var(--muted);'>" +
+          t("headcountLabel") + ": " + (extra.headcount != null ? extra.headcount : "-") + " / " +
+          t("entertainmentLabel") + ": " + (extra.entertainmentCny != null ? Number(extra.entertainmentCny).toLocaleString() : "-") +
+          "</span>";
+      }
       div.innerHTML = html;
       div.addEventListener("click", function () {
         corpFilter = (corpFilter === pair.corp) ? null : pair.corp;
@@ -92,7 +110,7 @@
     lines.forEach(function (l, i) {
       var tr = document.createElement("tr");
       tr.innerHTML = "<td>" + (i + 1) + "</td><td>" + window.corpLabel(l.corp) + "</td><td>" + window.officeLabel(l.office) + "</td><td>" + statementLabel(l.statementType) + "</td>" +
-        "<td style='text-align:left;'>" + accountLabel(l.accountCode) + "</td>" +
+        "<td style='text-align:left;'>" + accountLabel(l.accountCode, l.statementType) + "</td>" +
         "<td>" + Number(l.amountCny).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "</td>" +
         "<td>" + (l.amountKrw != null ? Number(l.amountKrw).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "-") + "</td>" +
         "<td>" + (l.submittedBy || "") + "</td>" +
@@ -202,7 +220,7 @@
     var header = [t("rowNumberCol"), t("colCorp"), t("colOffice"), t("colStatementType"), t("colAccount"), t("colAmountCny"), t("colAmountKrw"), t("colSubmittedBy"), t("colSubmittedAt")];
     var aoa = [header];
     lines.forEach(function (l, i) {
-      aoa.push([i + 1, window.corpLabel(l.corp), window.officeLabel(l.office), statementLabel(l.statementType), accountLabel(l.accountCode),
+      aoa.push([i + 1, window.corpLabel(l.corp), window.officeLabel(l.office), statementLabel(l.statementType), accountLabel(l.accountCode, l.statementType),
         l.amountCny, l.amountKrw != null ? l.amountKrw : "", l.submittedBy || "", l.submittedAt ? new Date(l.submittedAt).toLocaleString() : ""]);
     });
     var ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -278,7 +296,7 @@
       var tr = document.createElement("tr");
       tr.innerHTML =
         "<td>" + statementLabel(r.statementType) + "</td>" +
-        "<td style='text-align:left;'>" + accountLabel(r.accountCode) + "</td>" +
+        "<td style='text-align:left;'>" + accountLabel(r.accountCode, r.statementType) + "</td>" +
         "<td>" + Number(r.amountCny).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "</td>" +
         "<td>" + (r.amountKrw != null ? Number(r.amountKrw).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "-") + "</td>" +
         "<td>" + r.officeCount + "</td>";

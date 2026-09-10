@@ -371,7 +371,7 @@
       renderBsReportTable("consolBsBody", consolReports.bs);
       renderFlowReportTable("consolCfBody", consolReports.cf);
     }).catch(function () {
-      showToast(t("adminFetchFail"));
+      showToast(t("adminConsolFetchFail"));
     });
   }
 

@@ -57,6 +57,7 @@ window.I18N = {
     adminYm: "조회할 적용년도월",
     adminFetch: "조회",
     adminFetchFail: "조회에 실패했습니다. 접근키를 확인해주세요.",
+    adminConsolFetchFail: "합병 재무제표 조회에 실패했습니다. Supabase에 최신 schema.sql이 적용되었는지 확인해주세요 (get_consolidated_flow_report/get_consolidated_bs_report 함수가 필요합니다).",
     adminKeyRequired: "접근키를 먼저 입력해주세요.",
 
     adminMonthStatus: "이 달 상태",
@@ -183,6 +184,7 @@ window.I18N = {
     adminYm: "要查询的适用年月",
     adminFetch: "查询",
     adminFetchFail: "查询失败，请检查接入密钥。",
+    adminConsolFetchFail: "合并财务报表查询失败，请确认Supabase是否已应用最新schema.sql（需要get_consolidated_flow_report/get_consolidated_bs_report函数）。",
     adminKeyRequired: "请先输入接入密钥。",
 
     adminMonthStatus: "本月状态",

@@ -132,18 +132,20 @@ create index if not exists idx_acct_lines_corp_ym on acct_statement_lines(corp, 
 alter table acct_statement_lines enable row level security;
 revoke all on acct_statement_lines from anon, authenticated;
 
--- PL(한국) 제출 시 같이 입력하는 비재무 수기값 (인원수) + 접대비 월간 합계(접대비 앱은 별도
--- Supabase 프로젝트라 DB 조인이 불가능해 지점이 회계관리 쪽에 수기로 입력합니다).
+-- PL(한국) 제출 시 같이 입력하는 비재무 수기값 (인원수) + 접대비/출장비 월간 합계(접대비 앱은
+-- 별도 Supabase 프로젝트라 DB 조인이 불가능해 지점이 회계관리 쪽에 수기로 입력합니다).
 create table if not exists acct_pl_kr_extra (
   corp text not null,
   office text not null default '',
   yearmonth text not null,
   headcount integer,
   entertainment_cny numeric,
+  travel_cny numeric,
   submitted_by text,
   submitted_at timestamptz not null default now(),
   primary key (corp, office, yearmonth)
 );
+alter table acct_pl_kr_extra add column if not exists travel_cny numeric;
 alter table acct_pl_kr_extra enable row level security;
 revoke all on acct_pl_kr_extra from anon, authenticated;
 
@@ -349,7 +351,10 @@ begin
 end;
 $$;
 
--- PL(한국) 부가 수기입력(인원수/접대비) 제출. office_scope가 있으면 자기 지점만 가능.
+-- PL(한국) 부가 수기입력(인원수/접대비/출장비) 제출. office_scope가 있으면 자기 지점만 가능.
+-- ⚠ 예전 시그니처(출장비 파라미터 없음)는 create or replace로 대체되지 않고 오버로드로 남으므로
+-- 명시적으로 드롭합니다.
+drop function if exists submit_pl_kr_extra(text, text, text, text, integer, numeric, text);
 create or replace function submit_pl_kr_extra(
   p_access_key text,
   p_corp text,
@@ -357,6 +362,7 @@ create or replace function submit_pl_kr_extra(
   p_yearmonth text,
   p_headcount integer,
   p_entertainment_cny numeric,
+  p_travel_cny numeric,
   p_submitted_by text
 ) returns void
 language plpgsql
@@ -383,11 +389,11 @@ begin
     raise exception 'invalid_payload';
   end if;
 
-  insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, submitted_by, submitted_at)
-  values (p_corp, p_office, p_yearmonth, p_headcount, p_entertainment_cny, p_submitted_by, now())
+  insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, travel_cny, submitted_by, submitted_at)
+  values (p_corp, p_office, p_yearmonth, p_headcount, p_entertainment_cny, p_travel_cny, p_submitted_by, now())
   on conflict (corp, office, yearmonth) do update
     set headcount = excluded.headcount, entertainment_cny = excluded.entertainment_cny,
-        submitted_by = excluded.submitted_by, submitted_at = now();
+        travel_cny = excluded.travel_cny, submitted_by = excluded.submitted_by, submitted_at = now();
 end;
 $$;
 
@@ -415,7 +421,7 @@ begin
 
   return coalesce((
     select to_jsonb(x) from (
-      select headcount, entertainment_cny as "entertainmentCny"
+      select headcount, entertainment_cny as "entertainmentCny", travel_cny as "travelCny"
       from acct_pl_kr_extra
       where corp = v_corp and office = v_office and yearmonth = p_yearmonth
     ) x
@@ -467,7 +473,7 @@ begin
   select coalesce(jsonb_agg(to_jsonb(x) order by x.corp, x.office), '[]'::jsonb)
     into v_extras
   from (
-    select corp, office, headcount, entertainment_cny as "entertainmentCny"
+    select corp, office, headcount, entertainment_cny as "entertainmentCny", travel_cny as "travelCny"
     from acct_pl_kr_extra where yearmonth = p_yearmonth
   ) x;
 
@@ -594,7 +600,7 @@ grant execute on function set_exchange_rate(text, text, numeric) to anon, authen
 grant execute on function submit_statement(text, text, text, text, text, text, jsonb) to anon, authenticated;
 grant execute on function get_statement(text, text, text, text) to anon, authenticated;
 grant execute on function get_consolidated_statement(text, text, text) to anon, authenticated;
-grant execute on function submit_pl_kr_extra(text, text, text, text, integer, numeric, text) to anon, authenticated;
+grant execute on function submit_pl_kr_extra(text, text, text, text, integer, numeric, numeric, text) to anon, authenticated;
 grant execute on function get_pl_kr_extra(text, text, text, text) to anon, authenticated;
 grant execute on function get_aggregate(text, text) to anon, authenticated;
 grant execute on function close_month(text, text) to anon, authenticated;

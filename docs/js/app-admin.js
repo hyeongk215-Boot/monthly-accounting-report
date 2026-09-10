@@ -90,7 +90,8 @@
       if (extra) {
         html += "<br><span style='font-size:11px;color:var(--muted);'>" +
           t("headcountLabel") + ": " + (extra.headcount != null ? extra.headcount : "-") + " / " +
-          t("entertainmentLabel") + ": " + (extra.entertainmentCny != null ? Number(extra.entertainmentCny).toLocaleString() : "-") +
+          t("entertainmentLabel") + ": " + (extra.entertainmentCny != null ? Number(extra.entertainmentCny).toLocaleString() : "-") + " / " +
+          t("travelLabel") + ": " + (extra.travelCny != null ? Number(extra.travelCny).toLocaleString() : "-") +
           "</span>";
       }
       div.innerHTML = html;

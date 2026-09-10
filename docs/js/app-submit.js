@@ -47,25 +47,16 @@
       '<div class="btn-row" style="align-items:center;">' +
         "<label>" + t("headcountLabel") + " <input type='number' step='1' id='plKrHeadcount' style='width:80px;'></label>" +
         "<label>" + t("entertainmentLabel") + " <input type='number' step='0.01' id='plKrEntertainment' style='width:120px;'></label>" +
+        "<label>" + t("travelLabel") + " <input type='number' step='0.01' id='plKrTravel' style='width:120px;'></label>" +
       "</div>"
     );
   }
 
   function panelHtml(type) {
-    var standardUploadHtml = "";
-    if (type === "PL" || type === "PL_KR" || type === "BS") {
-      standardUploadHtml =
-        '<div class="note-box">' + t("uploadStandardNote") + "</div>" +
-        '<div class="btn-row" style="align-items:center;">' +
-          '<input type="file" id="uploadStandardFile_' + type + '" accept=".xls,.xlsx">' +
-          '<button class="btn-primary" data-action="uploadStandard" data-type="' + type + '">' + t("uploadStandardBtn") + "</button>" +
-        "</div>";
-    }
     return (
       '<div class="tab-panel' + (type === "PL" ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +
-        standardUploadHtml +
         '<div class="btn-row" style="align-items:center;">' +
           '<button class="btn-secondary" data-action="template" data-type="' + type + '">' + t("downloadTemplateBtn") + "</button>" +
           '<input type="file" id="uploadFile_' + type + '" accept=".xlsx">' +
@@ -153,7 +144,6 @@
       var action = btn.dataset.action;
       if (action === "template") downloadTemplate(type);
       if (action === "upload") uploadFile(type);
-      if (action === "uploadStandard") uploadStandardFile(type);
       if (action === "submit") submitTab(type);
     });
   }
@@ -188,34 +178,6 @@
     var krwCell = document.querySelector('#tbody_' + type + ' .krw-cell[data-code="' + code + '"]');
     if (krwCell) krwCell.textContent = krwPreview(amount);
     return true;
-  }
-
-  function uploadStandardFile(type) {
-    var input = document.getElementById("uploadStandardFile_" + type);
-    if (!input.files || !input.files[0]) {
-      showToast(t("uploadNoFile"));
-      return;
-    }
-    var file = input.files[0];
-    var parsePromise = (type === "PL" || type === "PL_KR") ? window.parseStandardPlReport(file) : window.parseStandardBsReport(file);
-    parsePromise.then(function (rows) {
-      var n = 0;
-      if (type === "PL" || type === "PL_KR") {
-        rows.forEach(function (r) {
-          if (applyUpload(type, r.accountCode, r.amountCny)) n++;
-        });
-      } else {
-        var bsAccounts = accounts.filter(function (a) { return a.statementType === "BS"; });
-        rows.forEach(function (r) {
-          var match = bsAccounts.filter(function (a) { return a.nameZh === r.nameZh; })[0];
-          if (match && applyUpload("BS", match.code, r.amountCny)) n++;
-        });
-      }
-      scheduleAutosave(type);
-      showToast(t("uploadSuccess", { n: n }));
-    }).catch(function () {
-      showToast(t("uploadStandardFail"));
-    });
   }
 
   function applyClosedState() {
@@ -271,6 +233,7 @@
   function submitPlKrExtra() {
     var hcEl = document.getElementById("plKrHeadcount");
     var entEl = document.getElementById("plKrEntertainment");
+    var travelEl = document.getElementById("plKrTravel");
     client.rpc("submit_pl_kr_extra", {
       p_access_key: ctx.accessKey,
       p_corp: ctx.corp,
@@ -278,6 +241,7 @@
       p_yearmonth: ctx.yearmonth,
       p_headcount: hcEl && hcEl.value !== "" ? Number(hcEl.value) : null,
       p_entertainment_cny: entEl && entEl.value !== "" ? Number(entEl.value) : null,
+      p_travel_cny: travelEl && travelEl.value !== "" ? Number(travelEl.value) : null,
       p_submitted_by: ctx.submitter
     }).then(function (res) {
       showToast(res.error ? t("submitFail") : t("submitSuccess"));
@@ -319,8 +283,10 @@
       applyClosedState();
       var hcEl = document.getElementById("plKrHeadcount");
       var entEl = document.getElementById("plKrEntertainment");
+      var travelEl = document.getElementById("plKrTravel");
       if (hcEl && plKrExtra.headcount != null) hcEl.value = plKrExtra.headcount;
       if (entEl && plKrExtra.entertainmentCny != null) entEl.value = plKrExtra.entertainmentCny;
+      if (travelEl && plKrExtra.travelCny != null) travelEl.value = plKrExtra.travelCny;
     }).catch(function () {
       showToast(t("submitFail"));
     });

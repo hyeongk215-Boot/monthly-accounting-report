@@ -12,6 +12,7 @@
   var existingLines = {};     // "type::accountCode" -> amountCny (get_statement 프리필)
   var exchangeRate = null;    // 이 달 환율 (없으면 null)
   var closedMonths = [];
+  var lockedTypes = [];       // 이 법인/지점/월에 이미 제출되어 잠긴 제표종류 목록
   var plKrExtra = {};         // { headcount, entertainmentCny } (get_pl_kr_extra 프리필)
 
   function showToast(msg) {
@@ -26,8 +27,20 @@
     el.innerHTML =
       "<span><b>" + t("corp") + "</b>: " + window.corpLabel(ctx.corp) + "</span>" +
       "<span><b>" + t("office") + "</b>: " + window.officeLabel(ctx.office) + "</span>" +
-      "<span><b>" + t("yearmonth") + "</b>: " + ctx.yearmonth + "</span>" +
+      "<span><b>" + t("yearmonth") + "</b>: <select id='ymSwitch'></select></span>" +
       "<span><b>" + t("submitterName") + "</b>: " + ctx.submitter + "</span>";
+    var sel = document.getElementById("ymSwitch");
+    window.generateYearMonths().forEach(function (ym) {
+      var o = document.createElement("option");
+      o.value = ym; o.textContent = ym;
+      sel.appendChild(o);
+    });
+    sel.value = ctx.yearmonth;
+    sel.addEventListener("change", function () {
+      ctx.yearmonth = sel.value;
+      window.saveContext(ctx);
+      loadAll();
+    });
   }
 
   function accountLabel(a) {
@@ -56,6 +69,7 @@
     return (
       '<div class="tab-panel' + (type === "PL" ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
+        '<div class="note-box" id="lockNote_' + type + '" style="display:none;">' + t("submissionLockedBanner") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +
         '<div class="btn-row" style="align-items:center;">' +
           '<button class="btn-secondary" data-action="template" data-type="' + type + '">' + t("downloadTemplateBtn") + "</button>" +
@@ -186,7 +200,28 @@
     banner.style.display = isClosed ? "block" : "none";
     banner.textContent = isClosed ? t("monthClosedBanner", { yearmonth: ctx.yearmonth }) : "";
     document.querySelectorAll('#tabPanels button[data-action="submit"]').forEach(function (b) {
-      b.disabled = isClosed;
+      if (isClosed) b.disabled = true;
+    });
+  }
+
+  function isLocked(type) {
+    return lockedTypes.indexOf(type) !== -1;
+  }
+
+  function applyLockedState() {
+    STATEMENT_TYPES.forEach(function (type) {
+      var locked = isLocked(type);
+      var lockNote = document.getElementById("lockNote_" + type);
+      if (lockNote) lockNote.style.display = locked ? "block" : "none";
+      var panel = document.querySelector('.tab-panel[data-panel="' + type + '"]');
+      if (!panel) return;
+      panel.querySelectorAll("input, button").forEach(function (el) {
+        if (el.type === "file" || el.dataset.action === "submit" || el.classList.contains("amt-cny") ||
+            el.id === "plKrHeadcount" || el.id === "plKrEntertainment" || el.id === "plKrTravel" ||
+            el.dataset.action === "upload") {
+          el.disabled = locked;
+        }
+      });
     });
   }
 
@@ -195,6 +230,11 @@
       showToast(t("submitFailClosed"));
       return;
     }
+    if (isLocked(type)) {
+      showToast(t("submissionLockedBanner"));
+      return;
+    }
+    if (!confirm(t("submitWarningConfirm"))) return;
     var lines = [];
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
       lines.push({ accountCode: input.dataset.code, amountCny: Number(input.value) || 0 });
@@ -209,10 +249,15 @@
       p_lines: lines
     }).then(function (res) {
       if (res.error) {
-        if (String(res.error.message || "").indexOf("month_closed") !== -1) {
+        var msg = String(res.error.message || "");
+        if (msg.indexOf("month_closed") !== -1) {
           closedMonths.push(ctx.yearmonth);
           applyClosedState();
           showToast(t("submitFailClosed"));
+        } else if (msg.indexOf("submission_locked") !== -1) {
+          lockedTypes.push(type);
+          applyLockedState();
+          showToast(t("submissionLockedBanner"));
         } else {
           showToast(t("submitFail"));
         }
@@ -223,10 +268,26 @@
       if (type === "PL_KR") {
         submitPlKrExtra();
       } else {
+        lockSubmission(type);
         showToast(t("submitSuccess"));
       }
     }).catch(function () {
       showToast(t("submitFail"));
+    });
+  }
+
+  function lockSubmission(type) {
+    client.rpc("lock_submission", {
+      p_access_key: ctx.accessKey,
+      p_corp: ctx.corp,
+      p_office: ctx.office,
+      p_yearmonth: ctx.yearmonth,
+      p_statement_type: type,
+      p_locked_by: ctx.submitter
+    }).then(function (res) {
+      if (res.error) return;
+      lockedTypes.push(type);
+      applyLockedState();
     });
   }
 
@@ -244,7 +305,12 @@
       p_travel_cny: travelEl && travelEl.value !== "" ? Number(travelEl.value) : null,
       p_submitted_by: ctx.submitter
     }).then(function (res) {
-      showToast(res.error ? t("submitFail") : t("submitSuccess"));
+      if (res.error) {
+        showToast(t("submitFail"));
+        return;
+      }
+      lockSubmission("PL_KR");
+      showToast(t("submitSuccess"));
     }).catch(function () {
       showToast(t("submitFail"));
     });
@@ -266,21 +332,27 @@
       showToast(t("submitFail"));
       return;
     }
+    existingLines = {};
+    lockedTypes = [];
+    plKrExtra = {};
     Promise.all([
       client.rpc("get_accounts", {}),
       client.rpc("get_statement", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
       client.rpc("get_exchange_rate", { p_yearmonth: ctx.yearmonth }),
       window.fetchClosedMonths(),
-      client.rpc("get_pl_kr_extra", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
+      client.rpc("get_pl_kr_extra", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
+      client.rpc("get_submission_locks", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
     ]).then(function (results) {
       accounts = (results[0].data || []).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
       (results[1].data || []).forEach(function (l) { existingLines[l.statementType + "::" + l.accountCode] = l.amountCny; });
       exchangeRate = results[2].data;
       closedMonths = results[3] || [];
       plKrExtra = results[4].data || {};
+      lockedTypes = results[5].data || [];
       renderContextBar();
       renderPanels();
       applyClosedState();
+      applyLockedState();
       var hcEl = document.getElementById("plKrHeadcount");
       var entEl = document.getElementById("plKrEntertainment");
       var travelEl = document.getElementById("plKrTravel");
@@ -300,6 +372,7 @@
       renderContextBar();
       renderPanels();
       applyClosedState();
+      applyLockedState();
     });
   });
 })();

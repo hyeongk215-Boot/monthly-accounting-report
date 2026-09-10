@@ -102,19 +102,30 @@
       </div>
       <div class="btn-row">
         <button class="btn-primary" id="consolFetchBtn" data-i18n="adminFetch"></button>
+        <button class="btn-secondary" id="consolDownloadBtn" data-i18n="adminDownload"></button>
       </div>
+
+      <h3 data-i18n="tabPL" style="font-size:15px; margin-top:22px;"></h3>
       <div class="table-wrap">
-        <table class="exp-table" id="consolTable">
-          <thead>
-            <tr>
-              <th data-i18n="colStatementType"></th>
-              <th data-i18n="colAccount"></th>
-              <th data-i18n="colAmountCny"></th>
-              <th data-i18n="colAmountKrw"></th>
-              <th data-i18n="consolidatedOfficeCount"></th>
-            </tr>
-          </thead>
-          <tbody id="consolBody"></tbody>
+        <table class="exp-table" id="consolPlTable">
+          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th></tr></thead>
+          <tbody id="consolPlBody"></tbody>
+        </table>
+      </div>
+
+      <h3 data-i18n="tabBS" style="font-size:15px; margin-top:22px;"></h3>
+      <div class="table-wrap">
+        <table class="exp-table" id="consolBsTable">
+          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentBalance"></th><th data-i18n="consolPriorYearEnd"></th></tr></thead>
+          <tbody id="consolBsBody"></tbody>
+        </table>
+      </div>
+
+      <h3 data-i18n="tabCF" style="font-size:15px; margin-top:22px;"></h3>
+      <div class="table-wrap">
+        <table class="exp-table" id="consolCfTable">
+          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th></tr></thead>
+          <tbody id="consolCfBody"></tbody>
         </table>
       </div>
     </div>

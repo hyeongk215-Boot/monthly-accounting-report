@@ -99,7 +99,7 @@ create table if not exists acct_exchange_rates (
 alter table acct_exchange_rates enable row level security;
 revoke all on acct_exchange_rates from anon, authenticated;
 
--- 월 마감
+-- 월 마감 (본사가 전체 법인/지점 대상으로 한 번에 마감 - 기존 기능, 유지)
 create table if not exists acct_closed_months (
   yearmonth text primary key,
   closed_at timestamptz not null default now(),
@@ -107,6 +107,20 @@ create table if not exists acct_closed_months (
 );
 alter table acct_closed_months enable row level security;
 revoke all on acct_closed_months from anon, authenticated;
+
+-- 제출 잠금 (지점이 스스로 제출을 마친 표는 1회 제출 후 자동 잠기며, 본사만 해제 가능).
+-- 위 acct_closed_months(전체 월마감)와는 별개 메커니즘 — 이건 개별 법인×지점×제표종류 단위입니다.
+create table if not exists acct_submission_lock (
+  corp text not null,
+  office text not null,
+  yearmonth text not null,
+  statement_type text not null,
+  locked_by text,
+  locked_at timestamptz not null default now(),
+  primary key (corp, office, yearmonth, statement_type)
+);
+alter table acct_submission_lock enable row level security;
+revoke all on acct_submission_lock from anon, authenticated;
 
 -- 재무제표 라인 (P&L/B/S/CF 공통 - 법인+지점+계정당 금액 하나가 자연키이므로 upsert로 관리)
 create table if not exists acct_statement_lines (
@@ -258,6 +272,14 @@ begin
     raise exception 'invalid_payload';
   end if;
 
+  if v_role not in ('system_admin', 'finance')
+     and exists (
+       select 1 from acct_submission_lock
+       where corp = p_corp and office = p_office and yearmonth = p_yearmonth and statement_type = p_statement_type
+     ) then
+    raise exception 'submission_locked';
+  end if;
+
   select cny_to_krw into v_rate from acct_exchange_rates where yearmonth = p_yearmonth;
 
   for v_row in select * from jsonb_array_elements(p_lines)
@@ -282,6 +304,40 @@ begin
   end loop;
 
   return v_count;
+end;
+$$;
+
+-- 제출 잠금 확정 (PL_KR은 submit_statement + submit_pl_kr_extra 두 번 호출이 모두 끝난 뒤
+-- 클라이언트가 명시적으로 호출 - 그래야 두 호출 사이에 조기 잠김으로 두번째 호출이 막히지 않습니다).
+-- 그 외 탭은 제출 성공 직후 클라이언트가 바로 호출합니다.
+create or replace function lock_submission(
+  p_access_key text,
+  p_corp text,
+  p_office text,
+  p_yearmonth text,
+  p_statement_type text,
+  p_locked_by text
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_branch_scope text;
+  v_office_scope text;
+begin
+  select role, branch_scope, office_scope into v_role, v_branch_scope, v_office_scope from verify_access_key(p_access_key);
+  if v_branch_scope is not null and p_corp is distinct from v_branch_scope then
+    raise exception 'unauthorized_branch';
+  end if;
+  if v_office_scope is not null and p_office is distinct from v_office_scope then
+    raise exception 'unauthorized_office';
+  end if;
+
+  insert into acct_submission_lock (corp, office, yearmonth, statement_type, locked_by)
+  values (p_corp, p_office, p_yearmonth, p_statement_type, p_locked_by)
+  on conflict (corp, office, yearmonth, statement_type) do nothing;
 end;
 $$;
 
@@ -319,8 +375,48 @@ begin
 end;
 $$;
 
--- 법인 통합 재무제표: 해당 법인의 모든 지점을 계정별로 합산 (지점 구분 없이 법인 전체 총계 확인용)
-create or replace function get_consolidated_statement(
+-- 합병 손익계산서/현금흐름표(흐름지표): 법인 산하 모든 지점을 합산한 당월 실적 + 당해 1월~당월 누계.
+-- p_statement_type은 'PL' 또는 'CF'만 사용합니다 (PL_KR은 내부 참고용이라 합병 리포트 대상이 아님).
+create or replace function get_consolidated_flow_report(
+  p_access_key text,
+  p_corp text,
+  p_yearmonth text,
+  p_statement_type text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_branch_scope text;
+  v_corp text;
+  v_start text;
+begin
+  select role, branch_scope into v_role, v_branch_scope from verify_access_key(p_access_key);
+  v_corp := coalesce(v_branch_scope, p_corp);
+  v_start := left(p_yearmonth, 4) || '-01';
+
+  return coalesce((
+    select jsonb_agg(to_jsonb(x) order by x."displayOrder")
+    from (
+      select a.code as "accountCode", a.name_ko as "nameKo", a.name_zh as "nameZh",
+             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal",
+             (select sum(l.amount_cny) from acct_statement_lines l
+               where l.corp = v_corp and l.yearmonth = p_yearmonth
+                 and l.statement_type = p_statement_type and l.account_code = a.code) as "currentCny",
+             (select sum(l.amount_cny) from acct_statement_lines l
+               where l.corp = v_corp and l.yearmonth between v_start and p_yearmonth
+                 and l.statement_type = p_statement_type and l.account_code = a.code) as "ytdCny"
+      from acct_accounts a
+      where a.statement_type = p_statement_type and a.active = true
+    ) x
+  ), '[]'::jsonb);
+end;
+$$;
+
+-- 합병 재무상태표(저량지표): 법인 산하 모든 지점을 합산한 당월말 잔액 + 전기말(전년 12월말) 잔액.
+create or replace function get_consolidated_bs_report(
   p_access_key text,
   p_corp text,
   p_yearmonth text
@@ -333,19 +429,25 @@ declare
   v_role text;
   v_branch_scope text;
   v_corp text;
+  v_prior_ym text;
 begin
   select role, branch_scope into v_role, v_branch_scope from verify_access_key(p_access_key);
   v_corp := coalesce(v_branch_scope, p_corp);
+  v_prior_ym := (left(p_yearmonth, 4)::int - 1) || '-12';
 
   return coalesce((
-    select jsonb_agg(to_jsonb(x) order by x."statementType", x."accountCode")
+    select jsonb_agg(to_jsonb(x) order by x."displayOrder")
     from (
-      select statement_type as "statementType", account_code as "accountCode",
-             sum(amount_cny) as "amountCny", sum(amount_krw) as "amountKrw",
-             count(distinct office) as "officeCount"
-      from acct_statement_lines
-      where corp = v_corp and yearmonth = p_yearmonth
-      group by statement_type, account_code
+      select a.code as "accountCode", a.name_ko as "nameKo", a.name_zh as "nameZh",
+             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal",
+             (select sum(l.amount_cny) from acct_statement_lines l
+               where l.corp = v_corp and l.yearmonth = p_yearmonth
+                 and l.statement_type = 'BS' and l.account_code = a.code) as "currentCny",
+             (select sum(l.amount_cny) from acct_statement_lines l
+               where l.corp = v_corp and l.yearmonth = v_prior_ym
+                 and l.statement_type = 'BS' and l.account_code = a.code) as "priorYearEndCny"
+      from acct_accounts a
+      where a.statement_type = 'BS' and a.active = true
     ) x
   ), '[]'::jsonb);
 end;
@@ -388,6 +490,13 @@ begin
   if p_corp is null or p_office is null or p_yearmonth is null then
     raise exception 'invalid_payload';
   end if;
+  if v_role not in ('system_admin', 'finance')
+     and exists (
+       select 1 from acct_submission_lock
+       where corp = p_corp and office = p_office and yearmonth = p_yearmonth and statement_type = 'PL_KR'
+     ) then
+    raise exception 'submission_locked';
+  end if;
 
   insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, travel_cny, submitted_by, submitted_at)
   values (p_corp, p_office, p_yearmonth, p_headcount, p_entertainment_cny, p_travel_cny, p_submitted_by, now())
@@ -429,6 +538,60 @@ begin
 end;
 $$;
 
+-- 특정 법인/지점/월의 제표별 잠금 상태 조회 (제출 화면에서 배너/버튼 비활성화용)
+create or replace function get_submission_locks(
+  p_access_key text,
+  p_corp text,
+  p_office text,
+  p_yearmonth text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_branch_scope text;
+  v_office_scope text;
+  v_corp text;
+  v_office text;
+begin
+  select role, branch_scope, office_scope into v_role, v_branch_scope, v_office_scope from verify_access_key(p_access_key);
+  v_corp := coalesce(v_branch_scope, p_corp);
+  v_office := coalesce(v_office_scope, p_office);
+
+  return coalesce((
+    select jsonb_agg(statement_type)
+    from acct_submission_lock
+    where corp = v_corp and office = v_office and yearmonth = p_yearmonth
+  ), '[]'::jsonb);
+end;
+$$;
+
+-- 제출 잠금 해제 (system_admin/finance 전용) - 지점이 다시 제출할 수 있도록 잠금 행을 삭제
+create or replace function unlock_submission(
+  p_access_key text,
+  p_corp text,
+  p_office text,
+  p_yearmonth text,
+  p_statement_type text
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+begin
+  select role into v_role from verify_access_key(p_access_key);
+  if v_role not in ('system_admin', 'finance') then
+    raise exception 'unauthorized';
+  end if;
+  delete from acct_submission_lock
+   where corp = p_corp and office = p_office and yearmonth = p_yearmonth and statement_type = p_statement_type;
+end;
+$$;
+
 -- 본사 집계 조회 (system_admin/finance 전용) - 지점별 상세 (office 포함)
 create or replace function get_aggregate(
   p_access_key text,
@@ -443,6 +606,7 @@ declare
   v_lines jsonb;
   v_submissions jsonb;
   v_extras jsonb;
+  v_locks jsonb;
 begin
   select role into v_role from verify_access_key(p_access_key);
   if v_role not in ('system_admin', 'finance') then
@@ -477,7 +641,14 @@ begin
     from acct_pl_kr_extra where yearmonth = p_yearmonth
   ) x;
 
-  return jsonb_build_object('lines', v_lines, 'submissions', v_submissions, 'extras', v_extras);
+  select coalesce(jsonb_agg(to_jsonb(k) order by k.corp, k.office, k."statementType"), '[]'::jsonb)
+    into v_locks
+  from (
+    select corp, office, statement_type as "statementType"
+    from acct_submission_lock where yearmonth = p_yearmonth
+  ) k;
+
+  return jsonb_build_object('lines', v_lines, 'submissions', v_submissions, 'extras', v_extras, 'locks', v_locks);
 end;
 $$;
 
@@ -598,10 +769,14 @@ grant execute on function get_closed_months() to anon, authenticated;
 grant execute on function get_exchange_rate(text) to anon, authenticated;
 grant execute on function set_exchange_rate(text, text, numeric) to anon, authenticated;
 grant execute on function submit_statement(text, text, text, text, text, text, jsonb) to anon, authenticated;
+grant execute on function lock_submission(text, text, text, text, text, text) to anon, authenticated;
 grant execute on function get_statement(text, text, text, text) to anon, authenticated;
-grant execute on function get_consolidated_statement(text, text, text) to anon, authenticated;
+grant execute on function get_consolidated_flow_report(text, text, text, text) to anon, authenticated;
+grant execute on function get_consolidated_bs_report(text, text, text) to anon, authenticated;
 grant execute on function submit_pl_kr_extra(text, text, text, text, integer, numeric, numeric, text) to anon, authenticated;
 grant execute on function get_pl_kr_extra(text, text, text, text) to anon, authenticated;
+grant execute on function get_submission_locks(text, text, text, text) to anon, authenticated;
+grant execute on function unlock_submission(text, text, text, text, text) to anon, authenticated;
 grant execute on function get_aggregate(text, text) to anon, authenticated;
 grant execute on function close_month(text, text) to anon, authenticated;
 grant execute on function reopen_month(text, text) to anon, authenticated;

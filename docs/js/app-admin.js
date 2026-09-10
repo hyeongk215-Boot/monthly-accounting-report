@@ -1,7 +1,8 @@
 (function () {
   var STATEMENT_TYPES = ["PL", "PL_KR", "BS", "CF"];
-  var lastData = null;      // { lines: [...], submissions: [...] }
+  var lastData = null;      // { lines: [...], submissions: [...], locks: [...] }
   var corpFilter = null;
+  var officeFilter = null;
   var typeFilter = null;
   var closedMonths = [];
   var currentRole = null;
@@ -39,6 +40,7 @@
   function filteredLines() {
     var lines = (lastData && lastData.lines) || [];
     if (corpFilter) lines = lines.filter(function (l) { return l.corp === corpFilter; });
+    if (officeFilter) lines = lines.filter(function (l) { return l.office === officeFilter; });
     if (typeFilter) lines = lines.filter(function (l) { return l.statementType === typeFilter; });
     return lines;
   }
@@ -58,6 +60,7 @@
     grid.innerHTML = "";
     var submitted = {};
     var extras = {};
+    var locked = {};
     var pairs = [];
     var seenPairs = {};
     ((lastData && lastData.submissions) || []).forEach(function (s) {
@@ -71,6 +74,9 @@
     ((lastData && lastData.extras) || []).forEach(function (x) {
       extras[x.corp + "::" + x.office] = x;
     });
+    ((lastData && lastData.locks) || []).forEach(function (k) {
+      locked[k.corp + "::" + k.office + "::" + k.statementType] = true;
+    });
     pairs.sort(function (a, b) {
       return (a.corp + a.office).localeCompare(b.corp + b.office);
     });
@@ -78,13 +84,19 @@
       var div = document.createElement("div");
       div.className = "status-chip";
       div.style.cursor = "pointer";
-      if (corpFilter === pair.corp) div.style.outline = "2px solid var(--primary)";
+      if (corpFilter === pair.corp && officeFilter === pair.office) div.style.outline = "2px solid var(--primary)";
       var html = "<b>" + window.corpLabel(pair.corp) + " - " + window.officeLabel(pair.office) + "</b><br>";
       html += STATEMENT_TYPES.map(function (type) {
         var s = submitted[pair.corp + "::" + pair.office + "::" + type];
-        return "<span style='display:inline-block; margin:2px 4px 0 0; padding:1px 6px; border-radius:8px; font-size:11px; background:" +
-          (s ? "#f2fbf3;color:var(--ok);" : "#fdf3f2;color:var(--danger);") + "'>" +
-          statementLabel(type) + ": " + (s ? t("adminSubmitted") : t("adminNotSubmitted")) + "</span>";
+        var isLocked = locked[pair.corp + "::" + pair.office + "::" + type];
+        var label = statementLabel(type) + ": " + (s ? t("adminSubmitted") : t("adminNotSubmitted")) + (isLocked ? " 🔒" : "");
+        var span = "<span style='display:inline-block; margin:2px 4px 0 0; padding:1px 6px; border-radius:8px; font-size:11px; background:" +
+          (isLocked ? "#fff8e6;color:#a56a00;" : (s ? "#f2fbf3;color:var(--ok);" : "#fdf3f2;color:var(--danger);")) + "'>" + label + "</span>";
+        if (isLocked) {
+          span += "<button type='button' class='btn-secondary unlock-btn' data-corp='" + pair.corp + "' data-office='" + pair.office +
+            "' data-type='" + type + "' style='font-size:10px; padding:1px 6px; margin:2px 4px 0 0;'>" + t("adminUnlockBtn") + "</button>";
+        }
+        return span;
       }).join(" ");
       var extra = extras[pair.corp + "::" + pair.office];
       if (extra) {
@@ -95,9 +107,18 @@
           "</span>";
       }
       div.innerHTML = html;
-      div.addEventListener("click", function () {
-        corpFilter = (corpFilter === pair.corp) ? null : pair.corp;
+      div.addEventListener("click", function (e) {
+        if (e.target.closest(".unlock-btn")) return;
+        var isSame = corpFilter === pair.corp && officeFilter === pair.office;
+        corpFilter = isSame ? null : pair.corp;
+        officeFilter = isSame ? null : pair.office;
         renderAll();
+      });
+      div.querySelectorAll(".unlock-btn").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          unlockSubmission(btn.dataset.corp, btn.dataset.office, btn.dataset.type);
+        });
       });
       grid.appendChild(div);
     });
@@ -228,8 +249,24 @@
     ws["!cols"] = [{ wch: 5 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 18 }];
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, ym);
-    var suffix = (corpFilter ? "_" + corpFilter : "") + (typeFilter ? "_" + typeFilter : "");
+    var suffix = (corpFilter ? "_" + corpFilter : "") + (officeFilter ? "_" + officeFilter : "") + (typeFilter ? "_" + typeFilter : "");
     XLSX.writeFile(wb, t("fileNamePrefix") + "_" + ym + suffix + ".xlsx");
+  }
+
+  function unlockSubmission(corp, office, type) {
+    var client = window.getSupabaseClient();
+    var key = getKey();
+    if (!client || !key) { showToast(t("adminKeyRequired")); return; }
+    if (!confirm(t("adminUnlockConfirm"))) return;
+    client.rpc("unlock_submission", {
+      p_access_key: key, p_corp: corp, p_office: office, p_yearmonth: getYm(), p_statement_type: type
+    }).then(function (res) {
+      if (res.error) throw res.error;
+      showToast(t("adminUnlockSuccess"));
+      fetchData();
+    }).catch(function () {
+      showToast(t("adminUnlockFail"));
+    });
   }
 
   function fetchData() {
@@ -247,6 +284,7 @@
       if (res.error) throw res.error;
       lastData = res.data;
       corpFilter = null;
+      officeFilter = null;
       typeFilter = null;
       renderAll();
       renderRate();
@@ -276,33 +314,89 @@
     document.getElementById("consolidatedSection").style.display = isConsolidated ? "block" : "none";
   }
 
+  var consolReports = { pl: [], bs: [], cf: [] };
+
+  function accountName(r) {
+    return getLang() === "zh" ? r.nameZh : r.nameKo;
+  }
+  function fmtAmount(n) {
+    return n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function renderFlowReportTable(bodyId, rows) {
+    var body = document.getElementById(bodyId);
+    body.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      if (r.isSubtotal) tr.className = "subtotal-row";
+      tr.innerHTML =
+        "<td style='text-align:left;'>" + accountName(r) + "</td>" +
+        "<td>" + fmtAmount(r.currentCny) + "</td>" +
+        "<td>" + fmtAmount(r.ytdCny) + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  function renderBsReportTable(bodyId, rows) {
+    var body = document.getElementById(bodyId);
+    body.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      if (r.isSubtotal) tr.className = "subtotal-row";
+      tr.innerHTML =
+        "<td style='text-align:left;'>" + accountName(r) + "</td>" +
+        "<td>" + fmtAmount(r.currentCny) + "</td>" +
+        "<td>" + fmtAmount(r.priorYearEndCny) + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
   function fetchConsolidated() {
     var client = window.getSupabaseClient();
     var key = getKey();
     var corp = document.getElementById("consolCorp").value;
+    var ym = getYm();
     if (!client) { showToast(t("adminFetchFail")); return; }
     if (!key) { showToast(t("adminKeyRequired")); return; }
-    client.rpc("get_consolidated_statement", { p_access_key: key, p_corp: corp, p_yearmonth: getYm() }).then(function (res) {
-      if (res.error) throw res.error;
-      renderConsolTable(res.data || []);
+    Promise.all([
+      client.rpc("get_consolidated_flow_report", { p_access_key: key, p_corp: corp, p_yearmonth: ym, p_statement_type: "PL" }),
+      client.rpc("get_consolidated_bs_report", { p_access_key: key, p_corp: corp, p_yearmonth: ym }),
+      client.rpc("get_consolidated_flow_report", { p_access_key: key, p_corp: corp, p_yearmonth: ym, p_statement_type: "CF" })
+    ]).then(function (results) {
+      if (results.some(function (r) { return r.error; })) throw new Error("fetch_failed");
+      consolReports.pl = results[0].data || [];
+      consolReports.bs = results[1].data || [];
+      consolReports.cf = results[2].data || [];
+      renderFlowReportTable("consolPlBody", consolReports.pl);
+      renderBsReportTable("consolBsBody", consolReports.bs);
+      renderFlowReportTable("consolCfBody", consolReports.cf);
     }).catch(function () {
       showToast(t("adminFetchFail"));
     });
   }
 
-  function renderConsolTable(rows) {
-    var body = document.getElementById("consolBody");
-    body.innerHTML = "";
-    rows.forEach(function (r) {
-      var tr = document.createElement("tr");
-      tr.innerHTML =
-        "<td>" + statementLabel(r.statementType) + "</td>" +
-        "<td style='text-align:left;'>" + accountLabel(r.accountCode, r.statementType) + "</td>" +
-        "<td>" + Number(r.amountCny).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "</td>" +
-        "<td>" + (r.amountKrw != null ? Number(r.amountKrw).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "-") + "</td>" +
-        "<td>" + r.officeCount + "</td>";
-      body.appendChild(tr);
+  function downloadConsolidated() {
+    if (!consolReports.pl.length && !consolReports.bs.length && !consolReports.cf.length) {
+      showToast(t("adminDeleteSelectedNone"));
+      return;
+    }
+    var corp = document.getElementById("consolCorp").value;
+    var ym = getYm();
+    var wb = XLSX.utils.book_new();
+    var flowHeader = [t("colAccount"), t("consolCurrentMonth"), t("consolYtd")];
+    [["PL", consolReports.pl, t("tabPL")], ["CF", consolReports.cf, t("tabCF")]].forEach(function (entry) {
+      var aoa = [flowHeader];
+      entry[1].forEach(function (r) { aoa.push([accountName(r), r.currentCny, r.ytdCny]); });
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }];
+      XLSX.utils.book_append_sheet(wb, ws, entry[2]);
     });
+    var bsAoa = [[t("colAccount"), t("consolCurrentBalance"), t("consolPriorYearEnd")]];
+    consolReports.bs.forEach(function (r) { bsAoa.push([accountName(r), r.currentCny, r.priorYearEndCny]); });
+    var bsWs = XLSX.utils.aoa_to_sheet(bsAoa);
+    bsWs["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, bsWs, t("tabBS"));
+    XLSX.writeFile(wb, t("fileNamePrefix") + "_" + window.corpLabel(corp) + "_" + ym + "_consol.xlsx");
   }
 
   function loadAccounts() {
@@ -345,6 +439,7 @@
     document.getElementById("viewByOfficeBtn").addEventListener("click", function () { switchView("byOffice"); });
     document.getElementById("viewConsolidatedBtn").addEventListener("click", function () { switchView("consolidated"); });
     document.getElementById("consolFetchBtn").addEventListener("click", fetchConsolidated);
+    document.getElementById("consolDownloadBtn").addEventListener("click", downloadConsolidated);
     document.getElementById("downloadBtn").addEventListener("click", downloadAggregate);
     document.getElementById("deleteSelectedBtn").addEventListener("click", deleteSelected);
     document.getElementById("selectAllCheckbox").addEventListener("change", function (e) {
@@ -352,6 +447,7 @@
     });
     document.getElementById("filterAllBtn").addEventListener("click", function () {
       corpFilter = null;
+      officeFilter = null;
       renderAll();
     });
     document.getElementById("adminYm").addEventListener("change", function () { renderMonthStatus(); renderRate(); });

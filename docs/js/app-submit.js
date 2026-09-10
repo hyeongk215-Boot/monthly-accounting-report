@@ -79,7 +79,7 @@
         "</div>" +
         '<div class="table-wrap">' +
           '<table class="exp-table"><thead><tr>' +
-            "<th>" + t("colAccount") + "</th><th>" + t("colAmountCny") + "</th><th>" + t("colAmountKrw") + "</th>" +
+            "<th>" + t("colLineNo") + "</th><th>" + t("colAccount") + "</th><th>" + t("colAmountCny") + "</th><th>" + t("colAmountKrw") + "</th>" +
           '</tr></thead><tbody id="tbody_' + type + '"></tbody></table>' +
         "</div>" +
         '<div class="btn-row">' +
@@ -106,6 +106,7 @@
       var lineKey = type + "::" + a.code;
       var initial = draftVal !== undefined ? draftVal : (existingLines[lineKey] !== undefined ? existingLines[lineKey] : "");
       tr.innerHTML =
+        "<td style='text-align:center; color:var(--muted);'>" + (a.lineNo || "") + "</td>" +
         "<td style='text-align:left;'>" + accountLabel(a) + "</td>" +
         "<td><input type='number' step='0.01' data-code='" + a.code + "' class='amt-cny' value='" + initial + "'></td>" +
         "<td class='krw-cell' data-code='" + a.code + "'>" + krwPreview(initial) + "</td>";

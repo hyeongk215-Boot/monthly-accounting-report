@@ -97,15 +97,15 @@ window.clearContext = function () {
 // ===== 재무제표 업로드 템플릿 내보내기/가져오기 =====
 // 컬럼: [계정코드, 계정과목명, 금액(CNY)] - 업로드 시 계정코드로 매칭하고 이름은 참고용입니다.
 window.buildStatementTemplate = function (accounts, statementType, lang) {
-  var header = [t("colAccount") + " Code", t("colAccount"), t("colAmountCny")];
+  var header = [t("colAccount") + " Code", t("colAccount"), t("colAmountCny"), t("colLineNo")];
   var aoa = [header];
   accounts
     .filter(function (a) { return a.statementType === statementType; })
     .forEach(function (a) {
-      aoa.push([a.code, lang === "zh" ? a.nameZh : a.nameKo, ""]);
+      aoa.push([a.code, lang === "zh" ? a.nameZh : a.nameKo, "", a.lineNo || ""]);
     });
   var ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 12 }, { wch: 26 }, { wch: 16 }];
+  ws["!cols"] = [{ wch: 12 }, { wch: 26 }, { wch: 16 }, { wch: 8 }];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, statementType);
   return wb;
@@ -133,13 +133,13 @@ window.parseStatementFile = function (file) {
 
 // ===== 계정과목(COA) 관리자 엑셀 내보내기/가져오기 =====
 window.buildAccountsWorkbook = function (accounts) {
-  var header = ["code", "nameKo", "nameZh", "statementType", "category", "displayOrder", "isSubtotal"];
+  var header = ["code", "nameKo", "nameZh", "statementType", "category", "displayOrder", "isSubtotal", "lineNo"];
   var aoa = [header];
   accounts.forEach(function (a) {
-    aoa.push([a.code, a.nameKo, a.nameZh, a.statementType, a.category, a.displayOrder, a.isSubtotal ? "TRUE" : "FALSE"]);
+    aoa.push([a.code, a.nameKo, a.nameZh, a.statementType, a.category, a.displayOrder, a.isSubtotal ? "TRUE" : "FALSE", a.lineNo || ""]);
   });
   var ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 10 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }];
+  ws["!cols"] = [{ wch: 10 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 8 }];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "accounts");
   return wb;
@@ -160,7 +160,8 @@ window.parseAccountsFile = function (file) {
         statementType: r[3] || "",
         category: r[4] || "",
         displayOrder: Number(r[5]) || 0,
-        isSubtotal: String(r[6]).toUpperCase() === "TRUE"
+        isSubtotal: String(r[6]).toUpperCase() === "TRUE",
+        lineNo: r[7] || ""
       });
     }
     return rows;

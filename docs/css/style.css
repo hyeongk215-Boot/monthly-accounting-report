@@ -154,3 +154,13 @@ tr.subtotal-row input { font-weight: 700; background: #f3f6fb; }
 .rate-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .rate-box b { color: var(--text); font-size: 15px; }
 .key-gate { max-width: 480px; margin: 60px auto; }
+
+/* ===== 회계관리 전용: 합병 재무제표(격식있는 정부양식 스타일) ===== */
+.report-sheet { margin-top: 26px; border-top: 2px solid var(--text); padding-top: 14px; }
+.report-title { text-align: center; font-size: 17px; font-weight: 700; letter-spacing: 4px; margin-bottom: 6px; }
+.report-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+table.report-table td.col-lineno, table.report-table th.col-lineno { text-align: center; width: 40px; color: var(--muted); }
+table.report-table td.col-label, table.report-table th.col-label { text-align: left; }
+table.report-table td.col-amt, table.report-table th.col-amt { text-align: right; }
+table.report-table td.col-blank { background: #fafbfc; border: none; }
+table.report-table td.subtotal-cell { background: #f3f6fb; font-weight: 700; }

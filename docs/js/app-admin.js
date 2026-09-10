@@ -330,25 +330,41 @@
       var tr = document.createElement("tr");
       if (r.isSubtotal) tr.className = "subtotal-row";
       tr.innerHTML =
-        "<td style='text-align:left;'>" + accountName(r) + "</td>" +
-        "<td>" + fmtAmount(r.currentCny) + "</td>" +
-        "<td>" + fmtAmount(r.ytdCny) + "</td>";
+        "<td class='col-lineno'>" + (r.lineNo || "") + "</td>" +
+        "<td class='col-label'>" + accountName(r) + "</td>" +
+        "<td class='col-amt'>" + fmtAmount(r.currentCny) + "</td>" +
+        "<td class='col-amt'>" + fmtAmount(r.ytdCny) + "</td>";
       body.appendChild(tr);
     });
   }
 
+  // 재무상태표는 자산(BS-L*)과 부채및자본(BS-R*)을 나란히 2단으로 배치합니다 (원본 정부양식과 동일한 구성).
   function renderBsReportTable(bodyId, rows) {
     var body = document.getElementById(bodyId);
     body.innerHTML = "";
-    rows.forEach(function (r) {
+    var left = rows.filter(function (r) { return r.accountCode.indexOf("BS-L") === 0; });
+    var right = rows.filter(function (r) { return r.accountCode.indexOf("BS-R") === 0; });
+    var maxLen = Math.max(left.length, right.length);
+    function cellsFor(r) {
+      if (!r) return "<td class='col-blank'></td><td class='col-blank'></td><td class='col-blank'></td><td class='col-blank'></td>";
+      var cls = r.isSubtotal ? " subtotal-cell" : "";
+      return (
+        "<td class='col-label" + cls + "'>" + accountName(r) + "</td>" +
+        "<td class='col-lineno" + cls + "'>" + (r.lineNo || "") + "</td>" +
+        "<td class='col-amt" + cls + "'>" + fmtAmount(r.currentCny) + "</td>" +
+        "<td class='col-amt" + cls + "'>" + fmtAmount(r.priorYearEndCny) + "</td>"
+      );
+    }
+    for (var i = 0; i < maxLen; i++) {
       var tr = document.createElement("tr");
-      if (r.isSubtotal) tr.className = "subtotal-row";
-      tr.innerHTML =
-        "<td style='text-align:left;'>" + accountName(r) + "</td>" +
-        "<td>" + fmtAmount(r.currentCny) + "</td>" +
-        "<td>" + fmtAmount(r.priorYearEndCny) + "</td>";
+      tr.innerHTML = cellsFor(left[i]) + cellsFor(right[i]);
       body.appendChild(tr);
-    });
+    }
+  }
+
+  function renderReportMeta(prefix, corp, ym) {
+    document.getElementById("consol" + prefix + "MetaCorp").textContent = window.corpLabel(corp);
+    document.getElementById("consol" + prefix + "MetaYm").textContent = ym + " (" + t("reportUnitNote") + ")";
   }
 
   function fetchConsolidated() {
@@ -370,6 +386,9 @@
       renderFlowReportTable("consolPlBody", consolReports.pl);
       renderBsReportTable("consolBsBody", consolReports.bs);
       renderFlowReportTable("consolCfBody", consolReports.cf);
+      renderReportMeta("Pl", corp, ym);
+      renderReportMeta("Bs", corp, ym);
+      renderReportMeta("Cf", corp, ym);
     }).catch(function () {
       showToast(t("adminConsolFetchFail"));
     });
@@ -383,18 +402,18 @@
     var corp = document.getElementById("consolCorp").value;
     var ym = getYm();
     var wb = XLSX.utils.book_new();
-    var flowHeader = [t("colAccount"), t("consolCurrentMonth"), t("consolYtd")];
+    var flowHeader = [t("colLineNo"), t("colAccount"), t("consolCurrentMonth"), t("consolYtd")];
     [["PL", consolReports.pl, t("tabPL")], ["CF", consolReports.cf, t("tabCF")]].forEach(function (entry) {
       var aoa = [flowHeader];
-      entry[1].forEach(function (r) { aoa.push([accountName(r), r.currentCny, r.ytdCny]); });
+      entry[1].forEach(function (r) { aoa.push([r.lineNo || "", accountName(r), r.currentCny, r.ytdCny]); });
       var ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }];
+      ws["!cols"] = [{ wch: 8 }, { wch: 26 }, { wch: 16 }, { wch: 16 }];
       XLSX.utils.book_append_sheet(wb, ws, entry[2]);
     });
-    var bsAoa = [[t("colAccount"), t("consolCurrentBalance"), t("consolPriorYearEnd")]];
-    consolReports.bs.forEach(function (r) { bsAoa.push([accountName(r), r.currentCny, r.priorYearEndCny]); });
+    var bsAoa = [[t("colLineNo"), t("colAccount"), t("consolCurrentBalance"), t("consolPriorYearEnd")]];
+    consolReports.bs.forEach(function (r) { bsAoa.push([r.lineNo || "", accountName(r), r.currentCny, r.priorYearEndCny]); });
     var bsWs = XLSX.utils.aoa_to_sheet(bsAoa);
-    bsWs["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }];
+    bsWs["!cols"] = [{ wch: 8 }, { wch: 26 }, { wch: 16 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, bsWs, t("tabBS"));
     XLSX.writeFile(wb, t("fileNamePrefix") + "_" + window.corpLabel(corp) + "_" + ym + "_consol.xlsx");
   }

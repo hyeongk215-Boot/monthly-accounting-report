@@ -105,28 +105,57 @@
         <button class="btn-secondary" id="consolDownloadBtn" data-i18n="adminDownload"></button>
       </div>
 
-      <h3 data-i18n="tabPL" style="font-size:15px; margin-top:22px;"></h3>
-      <div class="table-wrap">
-        <table class="exp-table" id="consolPlTable">
-          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th></tr></thead>
-          <tbody id="consolPlBody"></tbody>
-        </table>
+      <div class="report-sheet" id="consolPlSheet">
+        <div class="report-title" data-i18n="reportPlTitle"></div>
+        <div class="report-meta">
+          <span id="consolPlMetaCorp"></span>
+          <span id="consolPlMetaYm"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="exp-table report-table" id="consolPlTable">
+            <thead><tr>
+              <th data-i18n="colLineNo"></th><th data-i18n="colAccount"></th>
+              <th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th>
+            </tr></thead>
+            <tbody id="consolPlBody"></tbody>
+          </table>
+        </div>
       </div>
 
-      <h3 data-i18n="tabBS" style="font-size:15px; margin-top:22px;"></h3>
-      <div class="table-wrap">
-        <table class="exp-table" id="consolBsTable">
-          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentBalance"></th><th data-i18n="consolPriorYearEnd"></th></tr></thead>
-          <tbody id="consolBsBody"></tbody>
-        </table>
+      <div class="report-sheet" id="consolBsSheet">
+        <div class="report-title" data-i18n="reportBsTitle"></div>
+        <div class="report-meta">
+          <span id="consolBsMetaCorp"></span>
+          <span id="consolBsMetaYm"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="exp-table report-table" id="consolBsTable">
+            <thead><tr>
+              <th data-i18n="colAccount"></th><th data-i18n="colLineNo"></th>
+              <th data-i18n="consolCurrentBalance"></th><th data-i18n="consolPriorYearEnd"></th>
+              <th data-i18n="colAccount"></th><th data-i18n="colLineNo"></th>
+              <th data-i18n="consolCurrentBalance"></th><th data-i18n="consolPriorYearEnd"></th>
+            </tr></thead>
+            <tbody id="consolBsBody"></tbody>
+          </table>
+        </div>
       </div>
 
-      <h3 data-i18n="tabCF" style="font-size:15px; margin-top:22px;"></h3>
-      <div class="table-wrap">
-        <table class="exp-table" id="consolCfTable">
-          <thead><tr><th data-i18n="colAccount"></th><th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th></tr></thead>
-          <tbody id="consolCfBody"></tbody>
-        </table>
+      <div class="report-sheet" id="consolCfSheet">
+        <div class="report-title" data-i18n="reportCfTitle"></div>
+        <div class="report-meta">
+          <span id="consolCfMetaCorp"></span>
+          <span id="consolCfMetaYm"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="exp-table report-table" id="consolCfTable">
+            <thead><tr>
+              <th data-i18n="colLineNo"></th><th data-i18n="colAccount"></th>
+              <th data-i18n="consolCurrentMonth"></th><th data-i18n="consolYtd"></th>
+            </tr></thead>
+            <tbody id="consolCfBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>

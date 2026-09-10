@@ -81,6 +81,8 @@ create table if not exists acct_accounts (
   active boolean not null default true,
   updated_at timestamptz not null default now()
 );
+-- 원본 정부양식(会外01表/会外服02表/会企03表)의 行次(라인번호). 화면에 표시용이며 계산에는 안 씀.
+alter table acct_accounts add column if not exists line_no text;
 alter table acct_accounts drop constraint if exists acct_accounts_pkey;
 alter table acct_accounts add primary key (code, statement_type);
 alter table acct_accounts drop constraint if exists acct_accounts_statement_type_check;
@@ -176,7 +178,7 @@ as $$
   select coalesce(jsonb_agg(to_jsonb(a) order by a."statementType", a."displayOrder"), '[]'::jsonb)
   from (
     select code, name_ko as "nameKo", name_zh as "nameZh", statement_type as "statementType",
-           category, display_order as "displayOrder", is_subtotal as "isSubtotal"
+           category, display_order as "displayOrder", is_subtotal as "isSubtotal", line_no as "lineNo"
     from acct_accounts where active = true
   ) a;
 $$;
@@ -401,7 +403,7 @@ begin
     select jsonb_agg(to_jsonb(x) order by x."displayOrder")
     from (
       select a.code as "accountCode", a.name_ko as "nameKo", a.name_zh as "nameZh",
-             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal",
+             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal", a.line_no as "lineNo",
              (select sum(l.amount_cny) from acct_statement_lines l
                where l.corp = v_corp and l.yearmonth = p_yearmonth
                  and l.statement_type = p_statement_type and l.account_code = a.code) as "currentCny",
@@ -439,7 +441,7 @@ begin
     select jsonb_agg(to_jsonb(x) order by x."displayOrder")
     from (
       select a.code as "accountCode", a.name_ko as "nameKo", a.name_zh as "nameZh",
-             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal",
+             a.display_order as "displayOrder", a.is_subtotal as "isSubtotal", a.line_no as "lineNo",
              (select sum(l.amount_cny) from acct_statement_lines l
                where l.corp = v_corp and l.yearmonth = p_yearmonth
                  and l.statement_type = 'BS' and l.account_code = a.code) as "currentCny",
@@ -746,16 +748,16 @@ begin
 
   for v_row in select * from jsonb_array_elements(p_accounts)
   loop
-    insert into acct_accounts (code, name_ko, name_zh, statement_type, category, display_order, is_subtotal, active, updated_at)
+    insert into acct_accounts (code, name_ko, name_zh, statement_type, category, display_order, is_subtotal, line_no, active, updated_at)
     values (
       v_row->>'code', v_row->>'nameKo', v_row->>'nameZh', v_row->>'statementType',
       v_row->>'category', coalesce(nullif(v_row->>'displayOrder','')::integer, 0),
-      coalesce((v_row->>'isSubtotal')::boolean, false), true, now()
+      coalesce((v_row->>'isSubtotal')::boolean, false), nullif(v_row->>'lineNo', ''), true, now()
     )
     on conflict (code, statement_type) do update
       set name_ko = excluded.name_ko, name_zh = excluded.name_zh,
           category = excluded.category, display_order = excluded.display_order,
-          is_subtotal = excluded.is_subtotal, active = true, updated_at = now();
+          is_subtotal = excluded.is_subtotal, line_no = excluded.line_no, active = true, updated_at = now();
     v_count := v_count + 1;
   end loop;
 

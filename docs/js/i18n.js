@@ -20,6 +20,10 @@ window.I18N = {
     keyMismatchBranch: "이 접근키는 {branch} 전용입니다. 법인 선택이 자동으로 변경되었습니다.",
     keyMismatchOffice: "이 접근키는 {office} 지점 전용입니다. 지점 선택이 자동으로 변경되었습니다.",
 
+    myChecklistHeading: "나의 최근 3개월 제출 현황",
+    checklistAllDone: "모두 제출완료",
+    checklistMissingLabel: "미제출:",
+
     submitHeading: "재무제표 입력",
     tabPL: "손익계산서",
     tabPLKR: "손익계산서(한국)",
@@ -83,8 +87,9 @@ window.I18N = {
     adminStatusHeading: "법인별 제출 현황",
     adminSubmitted: "제출됨",
     adminNotSubmitted: "미제출",
-    adminFilterHint: "법인×지점을 클릭하면 해당 지점만 필터링됩니다 (다시 클릭하면 해제).",
+    adminFilterHint: "법인×지점을 클릭하면 해당 지점만 필터링됩니다 (다시 클릭하면 해제). 아직 한 건도 제출하지 않은 지점도 목록에 표시됩니다.",
     adminFilterAll: "전체 보기",
+    adminMissingOnlyLabel: "미제출 지점만 보기",
     adminUnlockBtn: "마감 해제",
     adminUnlockConfirm: "이 제표의 제출 잠금을 해제하시겠습니까? 해제하면 지점 담당자가 다시 수정/제출할 수 있습니다.",
     adminUnlockSuccess: "잠금이 해제되었습니다.",
@@ -153,6 +158,10 @@ window.I18N = {
     keyMismatchBranch: "该接入密钥仅限{branch}使用，已自动切换法人选择。",
     keyMismatchOffice: "该接入密钥仅限{office}分公司使用，已自动切换分公司选择。",
 
+    myChecklistHeading: "我最近3个月的提交情况",
+    checklistAllDone: "已全部提交",
+    checklistMissingLabel: "未提交:",
+
     submitHeading: "财务报表填报",
     tabPL: "损益表",
     tabPLKR: "损益表(韩国)",
@@ -216,8 +225,9 @@ window.I18N = {
     adminStatusHeading: "各法人提交情况",
     adminSubmitted: "已提交",
     adminNotSubmitted: "未提交",
-    adminFilterHint: "点击法人×分公司可只筛选该分公司（再次点击取消筛选）。",
+    adminFilterHint: "点击法人×分公司可只筛选该分公司（再次点击取消筛选）。尚未提交任何数据的分公司也会显示在列表中。",
     adminFilterAll: "查看全部",
+    adminMissingOnlyLabel: "只看未提交分公司",
     adminUnlockBtn: "解除锁定",
     adminUnlockConfirm: "确定要解除该报表的提交锁定吗？解除后分公司负责人可再次修改并提交。",
     adminUnlockSuccess: "已解除锁定。",

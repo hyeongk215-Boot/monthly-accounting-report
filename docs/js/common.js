@@ -34,6 +34,19 @@ window.defaultYearMonth = function () {
   return ym < window.MIN_YEARMONTH ? window.MIN_YEARMONTH : ym;
 };
 
+// 미제출 체크리스트용: 전월 기준 최근 n개월(오름차순) - 이미 마감되었어야 할 달만 대상으로 함
+window.recentYearMonths = function (n) {
+  var end = window.defaultYearMonth();
+  var parts = end.split("-");
+  var y = Number(parts[0]), m = Number(parts[1]);
+  var list = [];
+  for (var i = n - 1; i >= 0; i--) {
+    var d = new Date(y, m - 1 - i, 1);
+    list.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+  }
+  return list;
+};
+
 // ===== 월 마감 여부 조회 (공개 RPC) =====
 // 실패 시 빈 배열 반환 - 실제 마감 강제는 서버(submit_statement RPC)에서도 다시 검사합니다.
 window.fetchClosedMonths = function () {

@@ -22,6 +22,32 @@
     setTimeout(function () { el.classList.remove("show"); }, 3000);
   }
 
+  function renderMyChecklist() {
+    var body = document.getElementById("myChecklistBody");
+    if (!body) return;
+    var months = window.recentYearMonths(3);
+    Promise.all(months.map(function (ym) {
+      return client.rpc("get_submission_locks", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ym });
+    })).then(function (results) {
+      var html = "";
+      months.forEach(function (ym, i) {
+        var locked = (results[i] && results[i].data) || [];
+        var missing = STATEMENT_TYPES.filter(function (type) { return locked.indexOf(type) === -1; });
+        html += "<div style='margin:4px 0;'><b>" + ym + "</b>: ";
+        if (!missing.length) {
+          html += "<span style='color:var(--ok);'>" + t("checklistAllDone") + "</span>";
+        } else {
+          html += "<span style='color:var(--danger);'>" + t("checklistMissingLabel") + " " +
+            missing.map(statementTabLabel).join(", ") + "</span>";
+        }
+        html += "</div>";
+      });
+      body.innerHTML = html;
+    }).catch(function () {
+      body.innerHTML = "";
+    });
+  }
+
   function renderContextBar() {
     var el = document.getElementById("contextBar");
     el.innerHTML =
@@ -369,11 +395,13 @@
     bindTabs();
     bindPanelEvents();
     loadAll();
+    renderMyChecklist();
     document.addEventListener("langchange", function () {
       renderContextBar();
       renderPanels();
       applyClosedState();
       applyLockedState();
+      renderMyChecklist();
     });
   });
 })();

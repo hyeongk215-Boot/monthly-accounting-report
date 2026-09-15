@@ -4,9 +4,21 @@
   var corpFilter = null;
   var officeFilter = null;
   var typeFilter = null;
+  var missingOnly = false;
   var closedMonths = [];
   var currentRole = null;
   var accountsCache = [];
+
+  // 법인×지점 전체 목록 (제출 데이터가 하나도 없는 지점도 "미제출"로 표시하기 위해 CORP_OFFICES 기준으로 전수 나열)
+  function allOfficePairs() {
+    var pairs = [];
+    Object.keys(window.APP_CONFIG.CORP_OFFICES || {}).forEach(function (corp) {
+      window.APP_CONFIG.CORP_OFFICES[corp].forEach(function (office) {
+        pairs.push({ corp: corp, office: office });
+      });
+    });
+    return pairs;
+  }
 
   function showToast(msg) {
     var el = document.getElementById("toast");
@@ -61,15 +73,8 @@
     var submitted = {};
     var extras = {};
     var locked = {};
-    var pairs = [];
-    var seenPairs = {};
     ((lastData && lastData.submissions) || []).forEach(function (s) {
       submitted[s.corp + "::" + s.office + "::" + s.statementType] = s;
-      var pairKey = s.corp + "::" + s.office;
-      if (!seenPairs[pairKey]) {
-        seenPairs[pairKey] = true;
-        pairs.push({ corp: s.corp, office: s.office });
-      }
     });
     ((lastData && lastData.extras) || []).forEach(function (x) {
       extras[x.corp + "::" + x.office] = x;
@@ -77,9 +82,14 @@
     ((lastData && lastData.locks) || []).forEach(function (k) {
       locked[k.corp + "::" + k.office + "::" + k.statementType] = true;
     });
-    pairs.sort(function (a, b) {
+    var pairs = allOfficePairs().sort(function (a, b) {
       return (a.corp + a.office).localeCompare(b.corp + b.office);
     });
+    if (missingOnly) {
+      pairs = pairs.filter(function (pair) {
+        return STATEMENT_TYPES.some(function (type) { return !submitted[pair.corp + "::" + pair.office + "::" + type]; });
+      });
+    }
     pairs.forEach(function (pair) {
       var div = document.createElement("div");
       div.className = "status-chip";
@@ -470,6 +480,10 @@
       renderAll();
     });
     document.getElementById("adminYm").addEventListener("change", function () { renderMonthStatus(); renderRate(); });
+    document.getElementById("missingOnlyCheckbox").addEventListener("change", function (e) {
+      missingOnly = e.target.checked;
+      renderStatusGrid();
+    });
     document.getElementById("closeMonthBtn").addEventListener("click", toggleMonthClosed);
     document.getElementById("setRateBtn").addEventListener("click", setRate);
     document.getElementById("coaTemplateBtn").addEventListener("click", downloadCoaTemplate);

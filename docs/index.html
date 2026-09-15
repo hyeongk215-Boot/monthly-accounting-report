@@ -113,6 +113,14 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("langchange", init);
   document.getElementById("corp").addEventListener("change", refreshOfficeOptions);
 
+  // 통합 대시보드에서 "?key=..."로 넘어온 경우 접근키칸만 자동으로 채우고, 주소창/히스토리에는
+  // 남기지 않습니다(법인/지점/년월은 그대로 직접 선택). 기존 수동 로그인 방식은 그대로 동작합니다.
+  var urlKey = new URLSearchParams(window.location.search).get("key");
+  if (urlKey) {
+    document.getElementById("accessKey").value = urlKey;
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+  }
+
   document.getElementById("startBtn").addEventListener("click", function () {
     var corp = document.getElementById("corp").value;
     var office = document.getElementById("office").value;

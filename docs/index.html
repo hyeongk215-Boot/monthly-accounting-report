@@ -12,6 +12,7 @@
   <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
     <nav class="nav-links">
       <a href="admin.html" data-i18n="navAdmin">본사용: 관리자 화면</a>
+      <a href="https://hyeongk215-boot.github.io/monthly-management-system/" data-i18n="navDashboard">← 통합 대시보드</a>
     </nav>
     <div class="lang-switch">
       <button class="lang-btn" data-lang="ko">한국어</button>
@@ -35,10 +36,6 @@
       <div>
         <label data-i18n="yearmonth">적용년도월</label>
         <select id="yearmonth"></select>
-      </div>
-      <div>
-        <label data-i18n="submitterName">담당자 이름</label>
-        <input type="text" id="submitter">
       </div>
       <div>
         <label data-i18n="accessKeyLabel">접근키</label>
@@ -125,9 +122,8 @@ document.addEventListener("DOMContentLoaded", function () {
     var corp = document.getElementById("corp").value;
     var office = document.getElementById("office").value;
     var yearmonth = document.getElementById("yearmonth").value;
-    var submitter = document.getElementById("submitter").value.trim();
     var accessKey = document.getElementById("accessKey").value;
-    if (!corp || !office || !yearmonth || !submitter || !accessKey) {
+    if (!corp || !office || !yearmonth || !accessKey) {
       showToast(t("requiredWarning"));
       return;
     }
@@ -159,7 +155,7 @@ document.addEventListener("DOMContentLoaded", function () {
         corp: finalCorp,
         office: finalOffice,
         yearmonth: yearmonth,
-        submitter: submitter,
+        submitter: info.label || "",
         accessKey: accessKey,
         role: info.role,
         branchScope: info.branch_scope,

@@ -37,11 +37,13 @@ alter table access_keys add column if not exists office_scope text; -- null=bran
 alter table access_keys enable row level security;
 revoke all on access_keys from anon, authenticated;
 
--- 접근키 검증: 일치하는 키의 role/branch_scope/office_scope를 반환. 실패 시 invalid_access_key 예외.
+-- 접근키 검증: 일치하는 키의 role/branch_scope/office_scope/label을 반환. 실패 시 invalid_access_key 예외.
 -- 다른 모듈의 RPC도 이 함수를 그대로 호출해서 재사용합니다. (기존 모듈들은 role/branch_scope만
--- 명시적으로 select하므로 office_scope 컬럼 추가는 하위호환 — 예산관리/자금집행/실적분석 수정 불필요)
+-- 명시적으로 select하므로 office_scope/label 컬럼 추가는 하위호환 — 예산관리/자금집행/실적분석 수정 불필요)
+-- ⚠ label은 회계관리/예산관리 index.html에서 "담당자 이름" 수동입력 대신 제출자 표시용으로 자동 사용합니다.
+drop function if exists verify_access_key(text);
 create or replace function verify_access_key(p_key text)
-returns table(role text, branch_scope text, office_scope text)
+returns table(role text, branch_scope text, office_scope text, label text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -57,7 +59,7 @@ begin
     update access_keys
        set last_used_at = now()
      where key_hash = v_hash and active = true
-    returning access_keys.role, access_keys.branch_scope, access_keys.office_scope;
+    returning access_keys.role, access_keys.branch_scope, access_keys.office_scope, access_keys.label;
   if not found then
     raise exception 'invalid_access_key';
   end if;

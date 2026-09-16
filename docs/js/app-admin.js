@@ -101,7 +101,7 @@
         var isLocked = locked[pair.corp + "::" + pair.office + "::" + type];
         var label = statementLabel(type) + ": " + (s ? t("adminSubmitted") : t("adminNotSubmitted")) + (isLocked ? " 🔒" : "");
         var span = "<span style='display:inline-block; margin:2px 4px 0 0; padding:1px 6px; border-radius:8px; font-size:11px; background:" +
-          (isLocked ? "#fff8e6;color:#a56a00;" : (s ? "#f2fbf3;color:var(--ok);" : "#fdf3f2;color:var(--danger);")) + "'>" + label + "</span>";
+          (isLocked ? "var(--warn-bg);color:var(--warn);" : (s ? "var(--ok-bg);color:var(--ok);" : "var(--danger-bg);color:var(--danger);")) + "'>" + label + "</span>";
         if (isLocked) {
           span += "<button type='button' class='btn-secondary unlock-btn' data-corp='" + pair.corp + "' data-office='" + pair.office +
             "' data-type='" + type + "' style='font-size:10px; padding:1px 6px; margin:2px 4px 0 0;'>" + t("adminUnlockBtn") + "</button>";

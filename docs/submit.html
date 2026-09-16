@@ -5,21 +5,43 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>회계관리</title>
 <link rel="stylesheet" href="css/style.css">
+<script>document.documentElement.setAttribute("data-theme", localStorage.getItem("erpTheme") === "dark" ? "dark" : "light");</script>
 </head>
 <body>
-<header class="topbar">
-  <h1 data-i18n="appTitle">회계관리</h1>
-  <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
-    <nav class="nav-links">
-      <a href="index.html" data-i18n="backBtn">← 뒤로</a>
-      <a href="https://hyeongk215-boot.github.io/monthly-management-system/" data-i18n="navDashboard">← 통합 대시보드</a>
-    </nav>
-    <div class="lang-switch">
-      <button class="lang-btn" data-lang="ko">한국어</button>
-      <button class="lang-btn" data-lang="zh">中文</button>
+<div class="app-shell">
+  <aside class="app-sidebar">
+    <a class="app-brand" href="index.html"><span class="app-brand-text" data-i18n="moduleName"></span></a>
+
+    <div class="app-nav-label" data-i18n="navSecMain"></div>
+    <a class="app-nav-item" href="index.html">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="app-nav-text" data-i18n="navQuery"></span>
+    </a>
+    <a class="app-nav-item active" href="submit.html">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span class="app-nav-text" data-i18n="navSubmit"></span>
+    </a>
+
+    <div class="app-nav-label" data-i18n="navSecAdmin"></div>
+    <a class="app-nav-item" href="admin.html">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4v5c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V7z"/></svg>
+      <span class="app-nav-text" data-i18n="navAdminShort"></span>
+    </a>
+
+    <div class="app-sidebar-foot">
+      <button class="app-theme-btn" id="themeToggle" aria-label="theme"></button>
+      <button class="lang-btn" data-lang="ko">한</button>
+      <button class="lang-btn" data-lang="zh">中</button>
     </div>
-  </div>
-</header>
+  </aside>
+
+  <div class="app-main">
+    <header class="topbar">
+      <h1 data-i18n="appTitle"></h1>
+      <nav class="nav-links">
+        <a href="https://hyeongk215-boot.github.io/monthly-management-system/" data-i18n="navDashboard">← 통합 대시보드</a>
+      </nav>
+    </header>
 <main>
   <div class="card">
     <h2 data-i18n="myChecklistHeading">나의 최근 3개월 제출 현황</h2>
@@ -39,8 +61,10 @@
     </div>
     <div id="tabPanels"></div>
   </div>
-</main>
-<footer>회계관리 · China Branch Accounting Consolidation</footer>
+    </main>
+    <footer>회계관리 · China Branch Accounting Consolidation</footer>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script src="js/config.js"></script>

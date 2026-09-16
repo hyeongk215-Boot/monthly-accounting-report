@@ -1,5 +1,11 @@
 window.I18N = {
   ko: {
+    moduleName: "회계관리",
+    navSecMain: "조회",
+    navSecAdmin: "관리",
+    navQuery: "재무제표 조회",
+    navSubmit: "재무제표 제출",
+    navAdminShort: "관리자 화면",
     appTitle: "회계관리 - 중국법인 재무제표 취합 시스템",
     langName: "한국어",
     navAdmin: "본사용: 관리자 화면",
@@ -138,6 +144,12 @@ window.I18N = {
     rowNumberCol: "번호"
   },
   zh: {
+    moduleName: "会计管理",
+    navSecMain: "查询",
+    navSecAdmin: "管理",
+    navQuery: "财务报表查询",
+    navSubmit: "财务报表提交",
+    navAdminShort: "管理员页面",
     appTitle: "会计管理 - 中国法人财务报表汇总系统",
     langName: "中文",
     navAdmin: "总部用：管理员页面",

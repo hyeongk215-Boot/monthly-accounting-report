@@ -180,3 +180,29 @@ window.parseAccountsFile = function (file) {
     return rows;
   });
 };
+
+// ===== 테마(라이트/다크) 토글 =====
+// 깜빡임을 막기 위해 <head>의 인라인 스크립트가 data-theme를 먼저 설정하고, 여기서는
+// 사이드바의 #themeToggle 버튼에 아이콘과 클릭 동작만 붙입니다.
+(function () {
+  var MOON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+  var SUN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+
+  window.isDarkTheme = function () {
+    return document.documentElement.getAttribute("data-theme") === "dark";
+  };
+  window.applyTheme = function (dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    localStorage.setItem("erpTheme", dark ? "dark" : "light");
+    var btn = document.getElementById("themeToggle");
+    if (btn) btn.innerHTML = dark ? SUN : MOON;
+    document.dispatchEvent(new CustomEvent("themechange", { detail: { dark: dark } }));
+  };
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var btn = document.getElementById("themeToggle");
+    if (!btn) return;
+    btn.innerHTML = window.isDarkTheme() ? SUN : MOON;
+    btn.addEventListener("click", function () { window.applyTheme(!window.isDarkTheme()); });
+  });
+})();

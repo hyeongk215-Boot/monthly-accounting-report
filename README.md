@@ -102,6 +102,18 @@ statement_type을 새로 추가했습니다.
 `supabase/README-deploy.md`를 따라 Supabase에 스키마를 적용한 뒤,
 `docs/js/config.js`의 `SUPABASE_URL`/`SUPABASE_ANON_KEY`를 채우고 GitHub Pages로 배포하세요.
 
+`docs/` 아래의 js 또는 css를 고쳤다면 **커밋 직전에** 아래를 한 번 실행하세요.
+
+```bash
+bash tools/bump-cache-version.sh
+```
+
+HTML의 `<script src="js/...?v=">` / `<link href="css/...?v=">` 값을 현재 시각으로 한꺼번에
+갈아끼웁니다. GitHub Pages는 HTML과 JS를 모두 `max-age=600`으로 내려주기 때문에, 이 값이
+없으면 브라우저가 "새 app-*.js + 옛 common.js"처럼 짝이 안 맞는 조합을 들고 있을 수 있고
+그 경우 화면이 통째로 비어 버립니다. 버전을 붙여두면 최악의 경우도 "10분쯤 옛날 화면"에서
+끝납니다. (`vendor/`는 1MB가 넘는 외부 라이브러리라 일부러 제외했습니다.)
+
 ## 로컬 실행
 ```
 python -m http.server 8090 --directory docs

@@ -77,7 +77,57 @@ window.officeLabel = function (koValue, lang) {
   return item[lang || getLang()] || item.ko;
 };
 
+// ===== 금액 입력 천단위 콤마 =====
+// <input type="number">는 "1,000" 같은 콤마를 값으로 받지 못합니다(브라우저가 값을 통째로 버림).
+// 그래서 금액 칸은 type="text" + inputmode="decimal"로 두고 여기서 직접 콤마를 넣습니다.
+// ⚠ 화면에 보이는 값에는 콤마가 섞여 있으므로, 저장/전송/계산 전에는 **반드시** parseAmount()로
+//   콤마를 벗겨낸 뒤 Number()로 변환하세요.
+window.parseAmount = function (v) {
+  if (v == null) return "";
+  return String(v).replace(/,/g, "").trim();
+};
+
+window.formatAmount = function (v) {
+  var s = window.parseAmount(v);
+  if (s === "") return "";
+  var neg = s.charAt(0) === "-";
+  s = s.replace(/[^\d.]/g, "");                 // 숫자와 소수점만 남김
+  var dot = s.indexOf(".");
+  var intPart = dot === -1 ? s : s.slice(0, dot);
+  var decPart = dot === -1 ? null : s.slice(dot + 1).replace(/\./g, "");
+  intPart = intPart.replace(/^0+(?=\d)/, "");   // 앞자리 0 제거 (단 "0" 자체는 유지)
+  var out = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (decPart !== null) out += "." + decPart;   // 입력 도중의 "12." 상태도 그대로 허용
+  return neg ? "-" + out : out;
+};
+
+// 입력 중에 콤마를 다시 그리면 커서가 맨 뒤로 튑니다. 커서 앞의 "숫자 개수"를 세어두고
+// 다시 그린 뒤 같은 개수 위치로 되돌려서 타이핑이 끊기지 않게 합니다.
+window.formatAmountInput = function (el) {
+  var before = el.value;
+  var after = window.formatAmount(before);
+  if (after === before) return;
+  var pos = el.selectionStart == null ? before.length : el.selectionStart;
+  var kept = (before.slice(0, pos).match(/[\d.\-]/g) || []).length;
+  el.value = after;
+  var i = 0, seen = 0;
+  while (i < after.length && seen < kept) {
+    if (/[\d.\-]/.test(after.charAt(i))) seen++;
+    i++;
+  }
+  try { el.setSelectionRange(i, i); } catch (e) { /* type=text 아닌 경우 무시 */ }
+};
+
 // ===== localStorage 임시저장 (지점+제표 종류별로 draft 분리) =====
+// ⚠ 임시저장은 이 브라우저(localStorage)에만 남습니다. 다른 PC/브라우저나 시크릿 창에서는
+//   보이지 않고, 브라우저 데이터를 지우면 함께 사라집니다. 서버에 남는 건 "제출"뿐입니다.
+window.formatSavedAt = function (iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  function p(n) { return String(n).padStart(2, "0"); }
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    " " + p(d.getHours()) + ":" + p(d.getMinutes());
+};
 window.draftKey = function (corp, office, yearmonth, submitter, statementType) {
   return "draft::" + corp + "::" + office + "::" + yearmonth + "::" + (submitter || "") + "::" + statementType;
 };

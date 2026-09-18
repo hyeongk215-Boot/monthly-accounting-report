@@ -83,17 +83,18 @@
   // PL(한국)의 인원수/접대비/출장비. 표에 없는 값이라 놓치기 쉬워서 별도 박스로 크게 띄우고,
   // 세 칸이 다 채워지지 않으면 submitTab()에서 제출 자체를 막습니다.
   var PLKR_EXTRA_FIELDS = [
-    { id: "plKrHeadcount", labelKey: "headcountLabel", step: "1", storeKey: "headcount" },
-    { id: "plKrEntertainment", labelKey: "entertainmentLabel", step: "0.01", storeKey: "entertainmentCny" },
-    { id: "plKrTravel", labelKey: "travelLabel", step: "0.01", storeKey: "travelCny" }
+    { id: "plKrHeadcount", labelKey: "headcountLabel", storeKey: "headcount" },
+    { id: "plKrEntertainment", labelKey: "entertainmentLabel", storeKey: "entertainmentCny" },
+    { id: "plKrTravel", labelKey: "travelLabel", storeKey: "travelCny" }
   ];
 
   function plKrExtraHtml() {
+    // 금액 칸과 마찬가지로 천단위 콤마를 넣기 위해 type=text입니다(=number는 콤마를 못 받음).
     var fields = PLKR_EXTRA_FIELDS.map(function (f) {
       return (
         "<div>" +
           '<label for="' + f.id + '">' + t(f.labelKey) + ' <span class="req-mark">*</span></label>' +
-          "<input type='number' step='" + f.step + "' id='" + f.id + "' class='plkr-extra'>" +
+          "<input type='text' inputmode='decimal' id='" + f.id + "' class='plkr-extra'>" +
         "</div>"
       );
     }).join("");
@@ -133,8 +134,8 @@
       var draftVal = draftExtra[f.id];
       // 초안은 제출 성공 시 지워지므로, 남아 있다면 아직 제출 안 된 사용자의 입력입니다.
       // 그래서 서버 저장값보다 우선합니다(잠긴 칸은 예외 - 항상 서버 값을 보여줍니다).
-      if (!lockedField && draftVal != null && draftVal !== "") f.el.value = draftVal;
-      else if (f.stored != null) f.el.value = f.stored;
+      if (!lockedField && draftVal != null && draftVal !== "") f.el.value = window.formatAmount(draftVal);
+      else if (f.stored != null) f.el.value = window.formatAmount(f.stored);
       f.el.disabled = closed || lockedField;
       if (locked && !closed && f.stored == null) hasBlank = true;
     });
@@ -155,15 +156,17 @@
           '<button class="btn-secondary" data-action="template" data-type="' + type + '">' + t("downloadTemplateBtn") + "</button>" +
           '<input type="file" id="uploadFile_' + type + '" accept=".xlsx">' +
           '<button class="btn-secondary" data-action="upload" data-type="' + type + '">' + t("uploadBtn") + "</button>" +
-          '<span style="font-size:12px; color:var(--muted);" id="draftInfo_' + type + '"></span>' +
         "</div>" +
         '<div class="table-wrap">' +
           '<table class="exp-table"><thead><tr>' +
             "<th>" + t("colLineNo") + "</th><th>" + t("colAccount") + "</th><th>" + t("colAmountCny") + "</th><th>" + t("colAmountKrw") + "</th>" +
           '</tr></thead><tbody id="tbody_' + type + '"></tbody></table>' +
         "</div>" +
-        '<div class="btn-row">' +
+        '<div class="btn-row" style="align-items:center;">' +
           '<button class="btn-primary" data-action="submit" data-type="' + type + '">' + t("submitTabBtn") + "</button>" +
+          '<button class="btn-secondary" data-action="draft" data-type="' + type + '" title="' + t("draftLocalNote") + '">' +
+            t("draftSaveBtn") + "</button>" +
+          '<span class="draft-info" id="draftInfo_' + type + '"></span>' +
         "</div>" +
       "</div>"
     );
@@ -188,7 +191,7 @@
       tr.innerHTML =
         "<td style='text-align:center; color:var(--muted);'>" + (a.lineNo || "") + "</td>" +
         "<td style='text-align:left;'>" + accountLabel(a) + "</td>" +
-        "<td><input type='number' step='0.01' data-code='" + a.code + "' class='amt-cny' value='" + initial + "'></td>" +
+        "<td><input type='text' inputmode='decimal' data-code='" + a.code + "' class='amt-cny' value='" + window.formatAmount(initial) + "'></td>" +
         "<td class='krw-cell' data-code='" + a.code + "'>" + krwPreview(initial) + "</td>";
       tbody.appendChild(tr);
     });
@@ -198,7 +201,8 @@
   }
 
   function krwPreview(amountCny) {
-    var n = Number(amountCny);
+    // 화면 값에는 콤마가 섞여 있으므로 반드시 벗겨낸 뒤 숫자로 바꿉니다.
+    var n = Number(window.parseAmount(amountCny));
     if (!n || !exchangeRate) return "-";
     return Math.round(n * exchangeRate).toLocaleString();
   }
@@ -206,37 +210,52 @@
   function updateDraftInfo(type, draft) {
     var el = document.getElementById("draftInfo_" + type);
     if (!el) return;
-    el.textContent = draft && draft._savedAt ? (t("draftSavedAt") + ": " + new Date(draft._savedAt).toLocaleString()) : "";
+    el.textContent = draft && draft._savedAt
+      ? "💾 " + t("draftSavedAt") + ": " + window.formatSavedAt(draft._savedAt)
+      : "";   // 비어 있으면 CSS의 .draft-info:empty 가 칩을 통째로 숨깁니다.
+  }
+
+  // 임시저장에는 **콤마를 벗긴 값**만 넣습니다. 예전 초안(콤마 없던 시절)과도 형식이 같아
+  // 이미 저장해둔 초안이 그대로 살아납니다.
+  function saveDraftNow(type) {
+    var values = {};
+    document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
+      values[input.dataset.code] = window.parseAmount(input.value);
+    });
+    var payload = { values: values };
+    // PL_KR은 표 밖에 있는 인원수/접대비/출장비도 같이 보관해야 새로고침·언어전환에도 살아남습니다.
+    if (type === "PL_KR") {
+      payload.extra = {};
+      plKrExtraInputs().forEach(function (f) {
+        if (f.el) payload.extra[f.id] = window.parseAmount(f.el.value);
+      });
+    }
+    var saved = window.saveDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type), payload);
+    updateDraftInfo(type, { _savedAt: saved });
   }
 
   var saveTimers = {};
   function scheduleAutosave(type) {
     clearTimeout(saveTimers[type]);
-    saveTimers[type] = setTimeout(function () {
-      var values = {};
-      document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
-        values[input.dataset.code] = input.value;
-      });
-      var payload = { values: values };
-      // PL_KR은 표 밖에 있는 인원수/접대비/출장비도 같이 보관해야 새로고침·언어전환에도 살아남습니다.
-      if (type === "PL_KR") {
-        payload.extra = {};
-        plKrExtraInputs().forEach(function (f) {
-          if (f.el) payload.extra[f.id] = f.el.value;
-        });
-      }
-      var saved = window.saveDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type), payload);
-      updateDraftInfo(type, { _savedAt: saved });
-    }, 600);
+    saveTimers[type] = setTimeout(function () { saveDraftNow(type); }, 600);
+  }
+
+  // 「임시저장」 버튼: 자동저장을 기다리지 않고 즉시 저장하고, 저장됐다는 걸 눈으로 확인시켜 줍니다.
+  function saveDraftManual(type) {
+    clearTimeout(saveTimers[type]);
+    saveDraftNow(type);
+    showToast(t("draftSaved"));
   }
 
   function bindPanelEvents() {
     document.getElementById("tabPanels").addEventListener("input", function (e) {
       if (e.target.classList.contains("plkr-extra")) {
+        window.formatAmountInput(e.target);
         scheduleAutosave("PL_KR");
         return;
       }
       if (!e.target.classList.contains("amt-cny")) return;
+      window.formatAmountInput(e.target);
       var panel = e.target.closest(".tab-panel");
       var type = panel.dataset.panel;
       var krwCell = panel.querySelector('.krw-cell[data-code="' + e.target.dataset.code + '"]');
@@ -252,6 +271,7 @@
       if (action === "template") downloadTemplate(type);
       if (action === "upload") uploadFile(type);
       if (action === "submit") submitTab(type);
+      if (action === "draft") saveDraftManual(type);
       if (action === "backfill") backfillPlKrExtra();
     });
   }
@@ -282,7 +302,7 @@
   function applyUpload(type, code, amount) {
     var el = document.querySelector('#tbody_' + type + ' .amt-cny[data-code="' + code + '"]');
     if (!el) return false;
-    el.value = amount;
+    el.value = window.formatAmount(amount);
     var krwCell = document.querySelector('#tbody_' + type + ' .krw-cell[data-code="' + code + '"]');
     if (krwCell) krwCell.textContent = krwPreview(amount);
     return true;
@@ -334,7 +354,7 @@
     if (!confirm(t("submitWarningConfirm"))) return;
     var lines = [];
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
-      lines.push({ accountCode: input.dataset.code, amountCny: Number(input.value) || 0 });
+      lines.push({ accountCode: input.dataset.code, amountCny: Number(window.parseAmount(input.value)) || 0 });
     });
     client.rpc("submit_statement", {
       p_access_key: ctx.accessKey,
@@ -392,7 +412,7 @@
   function requirePlKrExtra() {
     var blank = null;
     plKrExtraInputs().forEach(function (f) {
-      if (!blank && f.el && !f.el.disabled && f.el.value === "") blank = f.el;
+      if (!blank && f.el && !f.el.disabled && window.parseAmount(f.el.value) === "") blank = f.el;
     });
     if (!blank) return true;
     showToast(t("plKrExtraMissing"));
@@ -403,7 +423,10 @@
 
   function plKrExtraPayload() {
     var byId = {};
-    plKrExtraInputs().forEach(function (f) { byId[f.id] = f.el && f.el.value !== "" ? Number(f.el.value) : null; });
+    plKrExtraInputs().forEach(function (f) {
+      var raw = f.el ? window.parseAmount(f.el.value) : "";
+      byId[f.id] = raw === "" ? null : Number(raw);
+    });
     return {
       p_access_key: ctx.accessKey,
       p_corp: ctx.corp,

@@ -146,9 +146,17 @@
     if (row) row.style.display = hasBlank ? "flex" : "none";
   }
 
+  // 지금 선택돼 있는 탭. 탭 바(#tabBar)는 다시 그리지 않고 패널만 다시 그리기 때문에,
+  // 패널을 만들 때 항상 여기를 물어봐야 탭 버튼 강조와 실제 보이는 패널이 어긋나지 않습니다.
+  // (언어 전환·적용년월 변경 때 renderPanels()가 불립니다.)
+  function activeTabType() {
+    var btn = document.querySelector("#tabBar .tab-btn.tab-active");
+    return btn && btn.dataset.tab ? btn.dataset.tab : STATEMENT_TYPES[0];
+  }
+
   function panelHtml(type) {
     return (
-      '<div class="tab-panel' + (type === "PL" ? " tab-active" : "") + '" data-panel="' + type + '">' +
+      '<div class="tab-panel' + (type === activeTabType() ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
         '<div class="note-box" id="lockNote_' + type + '" style="display:none;">' + t("submissionLockedBanner") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +

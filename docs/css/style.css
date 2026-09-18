@@ -276,6 +276,22 @@ tr.subtotal-row input { font-weight: 700; background: var(--surface-2); }
 .rate-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .rate-box b { color: var(--text); font-size: 15px; }
 
+/* 회계관리 전용: PL(한국) 필수 부가입력(인원수/접대비/출장비).
+   ⚠ 예전에는 이 세 칸이 업로드 버튼과 같은 .btn-row 안에 작은 라벨로 들어가 있어서
+   담당자가 못 보고 그냥 제출 → 잠금되는 사고가 있었습니다. 표 위에서 확실히 눈에 띄도록
+   테두리 있는 별도 박스로 분리했습니다. */
+.required-box {
+  border: 1px solid var(--primary); border-left: 4px solid var(--primary);
+  background: var(--primary-bg); border-radius: var(--radius);
+  padding: 14px 16px; margin-top: 14px;
+}
+.required-box-title { font-size: 14px; font-weight: 700; color: var(--primary); margin: 0 0 6px; }
+.required-box-desc { font-size: 12.5px; color: var(--text); margin: 0 0 12px; line-height: 1.6; }
+.required-box label { color: var(--text); }
+.required-box .req-mark { color: var(--danger); font-weight: 700; }
+/* 잠금 후 보완입력 모드에서, 이미 저장된 칸은 덮어쓸 수 없도록 회색으로 잠급니다. */
+.required-box input:disabled { background: var(--surface-2); color: var(--muted); cursor: not-allowed; }
+
 /* ===== 회계관리 전용: 합병 재무제표(격식있는 정부양식 스타일) ===== */
 .report-sheet { margin-top: 26px; border-top: 2px solid var(--text); padding-top: 14px; }
 .report-title { text-align: center; font-size: 17px; font-weight: 700; letter-spacing: 4px; margin-bottom: 6px; }

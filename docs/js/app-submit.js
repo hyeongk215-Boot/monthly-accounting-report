@@ -80,15 +80,69 @@
     return t("tabCF");
   }
 
+  // PL(한국)의 인원수/접대비/출장비. 표에 없는 값이라 놓치기 쉬워서 별도 박스로 크게 띄우고,
+  // 세 칸이 다 채워지지 않으면 submitTab()에서 제출 자체를 막습니다.
+  var PLKR_EXTRA_FIELDS = [
+    { id: "plKrHeadcount", labelKey: "headcountLabel", step: "1", storeKey: "headcount" },
+    { id: "plKrEntertainment", labelKey: "entertainmentLabel", step: "0.01", storeKey: "entertainmentCny" },
+    { id: "plKrTravel", labelKey: "travelLabel", step: "0.01", storeKey: "travelCny" }
+  ];
+
   function plKrExtraHtml() {
+    var fields = PLKR_EXTRA_FIELDS.map(function (f) {
+      return (
+        "<div>" +
+          '<label for="' + f.id + '">' + t(f.labelKey) + ' <span class="req-mark">*</span></label>' +
+          "<input type='number' step='" + f.step + "' id='" + f.id + "' class='plkr-extra'>" +
+        "</div>"
+      );
+    }).join("");
     return (
-      '<div class="note-box">' + t("plKrExtraNote") + "</div>" +
-      '<div class="btn-row" style="align-items:center;">' +
-        "<label>" + t("headcountLabel") + " <input type='number' step='1' id='plKrHeadcount' style='width:80px;'></label>" +
-        "<label>" + t("entertainmentLabel") + " <input type='number' step='0.01' id='plKrEntertainment' style='width:120px;'></label>" +
-        "<label>" + t("travelLabel") + " <input type='number' step='0.01' id='plKrTravel' style='width:120px;'></label>" +
+      '<div class="required-box">' +
+        '<p class="required-box-title">' + t("plKrExtraHeading") + "</p>" +
+        '<p class="required-box-desc">' + t("plKrExtraNote") + "</p>" +
+        '<div class="form-grid" style="margin-bottom:0;">' + fields + "</div>" +
+        '<div class="note-box" id="plKrBackfillNote" style="display:none;">' + t("plKrBackfillNote") + "</div>" +
+        '<div class="btn-row" id="plKrBackfillRow" style="display:none;">' +
+          '<button class="btn-primary" data-action="backfill" data-type="PL_KR">' + t("plKrBackfillBtn") + "</button>" +
+        "</div>" +
       "</div>"
     );
+  }
+
+  function plKrExtraInputs() {
+    return PLKR_EXTRA_FIELDS.map(function (f) {
+      return { el: document.getElementById(f.id), id: f.id, stored: plKrExtra[f.storeKey] };
+    });
+  }
+
+  // 서버 저장값 -> 임시저장 초안 순으로 세 칸을 채우고, 잠금 상태에 맞춰 보완입력 UI를 켭니다.
+  // renderPanels()가 패널 innerHTML을 통째로 다시 만들기 때문에(언어 전환 포함) 렌더 뒤에는
+  // 항상 이 함수를 다시 불러야 값이 날아가지 않습니다.
+  function applyPlKrExtra() {
+    var draft = window.loadDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, "PL_KR"));
+    var draftExtra = (draft && draft.extra) || {};
+    var locked = isLocked("PL_KR");
+    var closed = closedMonths.indexOf(ctx.yearmonth) !== -1;
+    var hasBlank = false;
+
+    plKrExtraInputs().forEach(function (f) {
+      if (!f.el) return;
+      // 잠긴 뒤에도 "아직 비어 있는" 칸만 열어둡니다. 이미 저장된 값은 잠가서 덮어쓰기를 막습니다.
+      var lockedField = locked && f.stored != null;
+      var draftVal = draftExtra[f.id];
+      // 초안은 제출 성공 시 지워지므로, 남아 있다면 아직 제출 안 된 사용자의 입력입니다.
+      // 그래서 서버 저장값보다 우선합니다(잠긴 칸은 예외 - 항상 서버 값을 보여줍니다).
+      if (!lockedField && draftVal != null && draftVal !== "") f.el.value = draftVal;
+      else if (f.stored != null) f.el.value = f.stored;
+      f.el.disabled = closed || lockedField;
+      if (locked && !closed && f.stored == null) hasBlank = true;
+    });
+
+    var note = document.getElementById("plKrBackfillNote");
+    var row = document.getElementById("plKrBackfillRow");
+    if (note) note.style.display = hasBlank ? "block" : "none";
+    if (row) row.style.display = hasBlank ? "flex" : "none";
   }
 
   function panelHtml(type) {
@@ -163,13 +217,25 @@
       document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
         values[input.dataset.code] = input.value;
       });
-      var saved = window.saveDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type), { values: values });
+      var payload = { values: values };
+      // PL_KR은 표 밖에 있는 인원수/접대비/출장비도 같이 보관해야 새로고침·언어전환에도 살아남습니다.
+      if (type === "PL_KR") {
+        payload.extra = {};
+        plKrExtraInputs().forEach(function (f) {
+          if (f.el) payload.extra[f.id] = f.el.value;
+        });
+      }
+      var saved = window.saveDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type), payload);
       updateDraftInfo(type, { _savedAt: saved });
     }, 600);
   }
 
   function bindPanelEvents() {
     document.getElementById("tabPanels").addEventListener("input", function (e) {
+      if (e.target.classList.contains("plkr-extra")) {
+        scheduleAutosave("PL_KR");
+        return;
+      }
       if (!e.target.classList.contains("amt-cny")) return;
       var panel = e.target.closest(".tab-panel");
       var type = panel.dataset.panel;
@@ -186,6 +252,7 @@
       if (action === "template") downloadTemplate(type);
       if (action === "upload") uploadFile(type);
       if (action === "submit") submitTab(type);
+      if (action === "backfill") backfillPlKrExtra();
     });
   }
 
@@ -226,7 +293,7 @@
     var banner = document.getElementById("closedBanner");
     banner.style.display = isClosed ? "block" : "none";
     banner.textContent = isClosed ? t("monthClosedBanner", { yearmonth: ctx.yearmonth }) : "";
-    document.querySelectorAll('#tabPanels button[data-action="submit"]').forEach(function (b) {
+    document.querySelectorAll('#tabPanels button[data-action="submit"], #tabPanels button[data-action="backfill"]').forEach(function (b) {
       if (isClosed) b.disabled = true;
     });
   }
@@ -242,9 +309,10 @@
       if (lockNote) lockNote.style.display = locked ? "block" : "none";
       var panel = document.querySelector('.tab-panel[data-panel="' + type + '"]');
       if (!panel) return;
+      // ⚠ .plkr-extra(인원수/접대비/출장비)는 여기서 손대지 않습니다. 잠긴 뒤에도 "비어 있는 칸만"
+      //   보완 입력할 수 있어야 해서, 그 세 칸의 disabled는 applyPlKrExtra()가 전담합니다.
       panel.querySelectorAll("input, button").forEach(function (el) {
         if (el.type === "file" || el.dataset.action === "submit" || el.classList.contains("amt-cny") ||
-            el.id === "plKrHeadcount" || el.id === "plKrEntertainment" || el.id === "plKrTravel" ||
             el.dataset.action === "upload") {
           el.disabled = locked;
         }
@@ -261,6 +329,8 @@
       showToast(t("submissionLockedBanner"));
       return;
     }
+    // 제출하면 바로 잠기므로, 세 칸이 비어 있으면 잠기기 전에 여기서 막습니다.
+    if (type === "PL_KR" && !requirePlKrExtra()) return;
     if (!confirm(t("submitWarningConfirm"))) return;
     var lines = [];
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
@@ -318,26 +388,64 @@
     });
   }
 
-  function submitPlKrExtra() {
-    var hcEl = document.getElementById("plKrHeadcount");
-    var entEl = document.getElementById("plKrEntertainment");
-    var travelEl = document.getElementById("plKrTravel");
-    client.rpc("submit_pl_kr_extra", {
+  // 세 칸이 모두 채워졌는지 검사하고, 비어 있으면 첫 빈 칸으로 커서를 옮깁니다.
+  function requirePlKrExtra() {
+    var blank = null;
+    plKrExtraInputs().forEach(function (f) {
+      if (!blank && f.el && !f.el.disabled && f.el.value === "") blank = f.el;
+    });
+    if (!blank) return true;
+    showToast(t("plKrExtraMissing"));
+    blank.focus();
+    blank.scrollIntoView({ block: "center" });
+    return false;
+  }
+
+  function plKrExtraPayload() {
+    var byId = {};
+    plKrExtraInputs().forEach(function (f) { byId[f.id] = f.el && f.el.value !== "" ? Number(f.el.value) : null; });
+    return {
       p_access_key: ctx.accessKey,
       p_corp: ctx.corp,
       p_office: ctx.office,
       p_yearmonth: ctx.yearmonth,
-      p_headcount: hcEl && hcEl.value !== "" ? Number(hcEl.value) : null,
-      p_entertainment_cny: entEl && entEl.value !== "" ? Number(entEl.value) : null,
-      p_travel_cny: travelEl && travelEl.value !== "" ? Number(travelEl.value) : null,
+      p_headcount: byId.plKrHeadcount,
+      p_entertainment_cny: byId.plKrEntertainment,
+      p_travel_cny: byId.plKrTravel,
       p_submitted_by: ctx.submitter
-    }).then(function (res) {
+    };
+  }
+
+  function submitPlKrExtra() {
+    client.rpc("submit_pl_kr_extra", plKrExtraPayload()).then(function (res) {
       if (res.error) {
         showToast(t("submitFail"));
         return;
       }
       lockSubmission("PL_KR");
       showToast(t("submitSuccess"));
+    }).catch(function () {
+      showToast(t("submitFail"));
+    });
+  }
+
+  // 이미 잠긴 뒤에 비어 있던 인원수/접대비/출장비만 채워 넣는 경로입니다.
+  // 재무제표 금액은 건드리지 않고(submit_statement를 부르지 않음), 서버도 이미 값이 있는 칸은
+  // coalesce로 지켜주므로 제출이 끝난 데이터가 덮어써질 수 없습니다.
+  function backfillPlKrExtra() {
+    if (closedMonths.indexOf(ctx.yearmonth) !== -1) {
+      showToast(t("submitFailClosed"));
+      return;
+    }
+    if (!requirePlKrExtra()) return;
+    client.rpc("submit_pl_kr_extra", plKrExtraPayload()).then(function (res) {
+      if (res.error) {
+        showToast(t("submitFail"));
+        return;
+      }
+      window.clearDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, "PL_KR"));
+      showToast(t("plKrBackfillSuccess"));
+      loadAll();
     }).catch(function () {
       showToast(t("submitFail"));
     });
@@ -380,12 +488,7 @@
       renderPanels();
       applyClosedState();
       applyLockedState();
-      var hcEl = document.getElementById("plKrHeadcount");
-      var entEl = document.getElementById("plKrEntertainment");
-      var travelEl = document.getElementById("plKrTravel");
-      if (hcEl && plKrExtra.headcount != null) hcEl.value = plKrExtra.headcount;
-      if (entEl && plKrExtra.entertainmentCny != null) entEl.value = plKrExtra.entertainmentCny;
-      if (travelEl && plKrExtra.travelCny != null) travelEl.value = plKrExtra.travelCny;
+      applyPlKrExtra();
     }).catch(function () {
       showToast(t("submitFail"));
     });
@@ -401,6 +504,7 @@
       renderPanels();
       applyClosedState();
       applyLockedState();
+      applyPlKrExtra();
       renderMyChecklist();
     });
   });

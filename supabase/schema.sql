@@ -458,6 +458,7 @@ end;
 $$;
 
 -- PL(한국) 부가 수기입력(인원수/접대비/출장비) 제출. office_scope가 있으면 자기 지점만 가능.
+-- PL_KR이 이미 잠긴 뒤에도 "비어 있는 칸만" 채우는 보완 입력(backfill)을 허용합니다(아래 주석 참고).
 -- ⚠ 예전 시그니처(출장비 파라미터 없음)는 create or replace로 대체되지 않고 오버로드로 남으므로
 -- 명시적으로 드롭합니다.
 drop function if exists submit_pl_kr_extra(text, text, text, text, integer, numeric, text);
@@ -479,6 +480,7 @@ declare
   v_role text;
   v_branch_scope text;
   v_office_scope text;
+  v_locked boolean;
 begin
   select role, branch_scope, office_scope into v_role, v_branch_scope, v_office_scope from verify_access_key(p_access_key);
 
@@ -494,12 +496,29 @@ begin
   if p_corp is null or p_office is null or p_yearmonth is null then
     raise exception 'invalid_payload';
   end if;
-  if v_role not in ('system_admin', 'finance')
-     and exists (
-       select 1 from acct_submission_lock
-       where corp = p_corp and office = p_office and yearmonth = p_yearmonth and statement_type = 'PL_KR'
-     ) then
-    raise exception 'submission_locked';
+
+  v_locked := exists (
+    select 1 from acct_submission_lock
+    where corp = p_corp and office = p_office and yearmonth = p_yearmonth and statement_type = 'PL_KR'
+  );
+
+  -- ⚠ 잠금 후 "보완 입력(backfill)" 전용 경로입니다.
+  --   화면에서 세 칸을 못 보고 그냥 제출해 잠가버린 지점이 인원수/접대비/출장비를 뒤늦게
+  --   채울 수 있어야 해서, 잠겨 있어도 raise 하지 않고 여기로 보냅니다.
+  --   단 coalesce(기존값, 새값) 이므로 **이미 값이 들어 있는 칸은 절대 덮어써지지 않고**,
+  --   비어 있던(null) 칸만 채워집니다. 재무제표 금액(acct_statement_lines)은 이 함수가
+  --   건드리지 않으므로 제출이 끝난 데이터는 그대로 보존됩니다.
+  --   월 마감(acct_closed_months)은 위에서 이미 막았으므로 마감월은 여전히 완전 동결입니다.
+  if v_locked and v_role not in ('system_admin', 'finance') then
+    insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, travel_cny, submitted_by, submitted_at)
+    values (p_corp, p_office, p_yearmonth, p_headcount, p_entertainment_cny, p_travel_cny, p_submitted_by, now())
+    on conflict (corp, office, yearmonth) do update
+      set headcount         = coalesce(acct_pl_kr_extra.headcount, excluded.headcount),
+          entertainment_cny = coalesce(acct_pl_kr_extra.entertainment_cny, excluded.entertainment_cny),
+          travel_cny        = coalesce(acct_pl_kr_extra.travel_cny, excluded.travel_cny),
+          submitted_by      = excluded.submitted_by,
+          submitted_at      = now();
+    return;
   end if;
 
   insert into acct_pl_kr_extra (corp, office, yearmonth, headcount, entertainment_cny, travel_cny, submitted_by, submitted_at)

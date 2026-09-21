@@ -101,7 +101,9 @@ function fillLocalizedSelect(sel, list, placeholderKey) {
   sel.appendChild(ph);
   list.forEach(function (item) {
     var o = document.createElement("option");
-    o.value = item.ko; o.textContent = item[lang] || item.ko;
+    // 한국어 표기만 ko값과 다른 항목(예: 저장값 "충칭", 표기 "중경")은 koLabel을 씁니다.
+    o.value = item.ko;
+    o.textContent = (lang === "ko" && item.koLabel) ? item.koLabel : (item[lang] || item.ko);
     sel.appendChild(o);
   });
   if (prev) sel.value = prev;

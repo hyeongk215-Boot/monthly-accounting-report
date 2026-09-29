@@ -125,6 +125,64 @@ window.formatAmountInput = function (el) {
   try { el.setSelectionRange(i, i); } catch (e) { /* type=text 아닌 경우 무시 */ }
 };
 
+// ===== 계산공식 (阶段一 · 财务报表自动计算 方案 v5) =====
+// acct_accounts.formula 에 저장된 "[BS-L18]-[BS-L19]" 형태의 가감식을 해석합니다.
+// 괄호·곱셈은 지원하지 않습니다 — 재무제표 합계행은 전부 가감식이고, 문법을 좁게 잡아야
+// 관리화면에서 공식을 잘못 입력할 여지가 없습니다.
+// ⚠ 여기 계산 결과는 어디까지나 **화면 미리보기**입니다. 저장값은 서버(acct_eval_formulas)가
+//   같은 공식으로 다시 계산한 값입니다. 둘이 어긋나면 서버 쪽이 정답입니다.
+window.parseFormula = function (formula) {
+  var terms = [];
+  var re = /([+-]?)\s*\[([^\]]+)\]/g;
+  var m;
+  while ((m = re.exec(formula)) !== null) {
+    terms.push({ sign: m[1] === "-" ? -1 : 1, code: m[2] });
+  }
+  return terms;
+};
+
+// 공식행을 "참조가 먼저, 참조하는 쪽이 나중" 순서로 정렬해 둡니다(위상정렬).
+// 예: BS-L20(=L18-L19) 이 BS-L23(=L20+L21+L22) 보다 먼저 계산돼야 한 번에 끝납니다.
+window.buildFormulaPlan = function (accounts, statementType) {
+  var rows = accounts.filter(function (a) {
+    return a.statementType === statementType && a.formula;
+  });
+  var byCode = {};
+  rows.forEach(function (a) { byCode[a.code] = a; });
+
+  var depth = {};
+  var visiting = {};
+  function depthOf(code) {
+    if (!byCode[code]) return 0;              // 명세행(=잎)
+    if (depth[code] != null) return depth[code];
+    if (visiting[code]) return 0;             // 순환참조 방어 — 공식 오입력 시 무한재귀 방지
+    visiting[code] = true;
+    var d = 0;
+    window.parseFormula(byCode[code].formula).forEach(function (term) {
+      d = Math.max(d, depthOf(term.code) + 1);
+    });
+    visiting[code] = false;
+    depth[code] = d;
+    return d;
+  }
+
+  return rows.map(function (a) {
+    return { code: a.code, formula: a.formula, terms: window.parseFormula(a.formula), depth: depthOf(a.code) };
+  }).sort(function (x, y) { return x.depth - y.depth; });
+};
+
+// values: { 계정코드: 숫자 }. 공식행 값을 채워 넣은 뒤 같은 객체를 돌려줍니다.
+window.evalFormulas = function (plan, values) {
+  plan.forEach(function (row) {
+    var sum = 0;
+    row.terms.forEach(function (term) {
+      sum += term.sign * (Number(values[term.code]) || 0);
+    });
+    values[row.code] = sum;
+  });
+  return values;
+};
+
 // ===== localStorage 임시저장 (지점+제표 종류별로 draft 분리) =====
 // ⚠ 임시저장은 이 브라우저(localStorage)에만 남습니다. 다른 PC/브라우저나 시크릿 창에서는
 //   보이지 않고, 브라우저 데이터를 지우면 함께 사라집니다. 서버에 남는 건 "제출"뿐입니다.
@@ -166,16 +224,19 @@ window.clearContext = function () {
 
 // ===== 재무제표 업로드 템플릿 내보내기/가져오기 =====
 // 컬럼: [계정코드, 계정과목명, 금액(CNY)] - 업로드 시 계정코드로 매칭하고 이름은 참고용입니다.
+// 5번째 열(계산공식)은 **설명용**입니다. parseStatementFile()은 0/1/2번 열만 읽으므로
+// 공식 열이 있든 없든 업로드 동작은 똑같습니다 (구버전 양식으로 올려도 그대로 동작).
 window.buildStatementTemplate = function (accounts, statementType, lang) {
-  var header = [t("colAccount") + " Code", t("colAccount"), t("colAmountCny"), t("colLineNo")];
+  var header = [t("colAccount") + " Code", t("colAccount"), t("colAmountCny"), t("colLineNo"), t("colFormula")];
   var aoa = [header];
   accounts
     .filter(function (a) { return a.statementType === statementType; })
     .forEach(function (a) {
-      aoa.push([a.code, lang === "zh" ? a.nameZh : a.nameKo, "", a.lineNo || ""]);
+      aoa.push([a.code, lang === "zh" ? a.nameZh : a.nameKo, "", a.lineNo || "",
+        a.formula ? t("templateAutoHint") + " " + a.formula : ""]);
     });
   var ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 12 }, { wch: 26 }, { wch: 16 }, { wch: 8 }];
+  ws["!cols"] = [{ wch: 12 }, { wch: 26 }, { wch: 16 }, { wch: 8 }, { wch: 46 }];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, statementType);
   return wb;
@@ -202,14 +263,16 @@ window.parseStatementFile = function (file) {
 };
 
 // ===== 계정과목(COA) 관리자 엑셀 내보내기/가져오기 =====
+// ⚠ formula 열을 반드시 포함시킵니다. 이 엑셀을 그대로 되올리면 COA가 통째로 교체되므로,
+//    열이 빠지면 28개 합계행의 공식이 조용히 전부 지워집니다(화면에는 0원으로만 보임).
 window.buildAccountsWorkbook = function (accounts) {
-  var header = ["code", "nameKo", "nameZh", "statementType", "category", "displayOrder", "isSubtotal", "lineNo"];
+  var header = ["code", "nameKo", "nameZh", "statementType", "category", "displayOrder", "isSubtotal", "lineNo", "formula"];
   var aoa = [header];
   accounts.forEach(function (a) {
-    aoa.push([a.code, a.nameKo, a.nameZh, a.statementType, a.category, a.displayOrder, a.isSubtotal ? "TRUE" : "FALSE", a.lineNo || ""]);
+    aoa.push([a.code, a.nameKo, a.nameZh, a.statementType, a.category, a.displayOrder, a.isSubtotal ? "TRUE" : "FALSE", a.lineNo || "", a.formula || ""]);
   });
   var ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 10 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 8 }];
+  ws["!cols"] = [{ wch: 10 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 60 }];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "accounts");
   return wb;
@@ -231,7 +294,8 @@ window.parseAccountsFile = function (file) {
         category: r[4] || "",
         displayOrder: Number(r[5]) || 0,
         isSubtotal: String(r[6]).toUpperCase() === "TRUE",
-        lineNo: r[7] || ""
+        lineNo: r[7] || "",
+        formula: r[8] ? String(r[8]).trim() : ""
       });
     }
     return rows;

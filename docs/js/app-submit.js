@@ -7,13 +7,46 @@
   }
 
   var client = window.getSupabaseClient();
-  var accounts = [];          // 전체 계정과목 (get_accounts)
+  var accounts = [];          // 전체 계정과목 (get_accounts, formula 포함)
   // PL과 PL_KR이 같은 AC CODE(예: 500000)를 공유하므로 "statementType::code"로 키를 분리합니다.
   var existingLines = {};     // "type::accountCode" -> amountCny (get_statement 프리필)
   var exchangeRate = null;    // 이 달 환율 (없으면 null)
   var closedMonths = [];
   var lockedTypes = [];       // 이 법인/지점/월에 이미 제출되어 잠긴 제표종류 목록
   var plKrExtra = {};         // { headcount, entertainmentCny } (get_pl_kr_extra 프리필)
+
+  // ===== 자동계산 (阶段一 · 财务报表自动计算 方案 v5) =====
+  var formulaPlans = {};      // type -> 위상정렬된 공식 목록 (buildFormulaPlan)
+  var calcModes = {};         // type -> 'auto' | 'legacy'
+  // 대조값: 업로드한 엑셀에 들어있던 회계프로그램 산출 합계. 합계행은 이 값을 화면에 넣지 않고
+  // 여기에 따로 담아둔 뒤 시스템 계산값과 비교만 합니다 (v5 3.8).
+  var compareValues = {};     // type -> { accountCode: 숫자 }
+
+  // 이 제표가 자동계산 대상인지. 'legacy'(2026-01~08 동결 구간)면 예전처럼 전부 수기입력입니다.
+  function isAutoCalc(type) {
+    return calcModes[type] !== "legacy" && (formulaPlans[type] || []).length > 0;
+  }
+
+  function formulaOf(type, code) {
+    if (!isAutoCalc(type)) return null;
+    var plan = formulaPlans[type] || [];
+    for (var i = 0; i < plan.length; i++) {
+      if (plan[i].code === code) return plan[i];
+    }
+    return null;
+  }
+
+  // 공식을 사람이 읽을 수 있게 — "[BS-L18]-[BS-L19]" -> "固定资产原价 − 累计折旧"
+  function formulaHint(type, plan) {
+    var names = {};
+    accounts.forEach(function (a) {
+      if (a.statementType === type) names[a.code] = accountLabel(a);
+    });
+    return plan.terms.map(function (term, i) {
+      var op = term.sign < 0 ? "− " : (i === 0 ? "" : "+ ");
+      return op + (names[term.code] || term.code);
+    }).join(" ");
+  }
 
   function showToast(msg) {
     var el = document.getElementById("toast");
@@ -159,6 +192,8 @@
       '<div class="tab-panel' + (type === activeTabType() ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
         '<div class="note-box" id="lockNote_' + type + '" style="display:none;">' + t("submissionLockedBanner") + "</div>" +
+        '<div class="note-box" id="calcNote_' + type + '" style="display:none;">' + t("calcAutoNote") + "</div>" +
+        '<div class="note-box" id="legacyNote_' + type + '" style="display:none;">' + t("calcLegacyNote") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +
         '<div class="btn-row" style="align-items:center;">' +
           '<button class="btn-secondary" data-action="template" data-type="' + type + '">' + t("downloadTemplateBtn") + "</button>" +
@@ -189,23 +224,80 @@
     var tbody = document.getElementById("tbody_" + type);
     var rows = accounts.filter(function (a) { return a.statementType === type; });
     var draft = window.loadDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type));
+    // 초안에 담아둔 대조값을 되살립니다(업로드 후 새로고침해도 경고가 유지되도록).
+    compareValues[type] = (draft && draft.compare) || compareValues[type] || {};
     tbody.innerHTML = "";
     rows.forEach(function (a) {
       var tr = document.createElement("tr");
+      var plan = formulaOf(type, a.code);
       if (a.isSubtotal) tr.className = "subtotal-row";
       var draftVal = draft && draft.values ? draft.values[a.code] : undefined;
       var lineKey = type + "::" + a.code;
       var initial = draftVal !== undefined ? draftVal : (existingLines[lineKey] !== undefined ? existingLines[lineKey] : "");
+      // 자동계산행은 readonly로 두되 input 자체는 남겨둡니다 — 제출 시 값을 모으는 코드와
+      // KRW 미리보기가 .amt-cny 기준으로 돌아가고 있어서 구조를 바꾸면 더 위험합니다.
       tr.innerHTML =
         "<td style='text-align:center; color:var(--muted);'>" + (a.lineNo || "") + "</td>" +
-        "<td style='text-align:left;'>" + accountLabel(a) + "</td>" +
-        "<td><input type='text' inputmode='decimal' data-code='" + a.code + "' class='amt-cny' value='" + window.formatAmount(initial) + "'></td>" +
+        "<td style='text-align:left;'>" + accountLabel(a) +
+          (plan ? "<span class='calc-badge' title='" + formulaHint(type, plan) + "'>" + t("calcAutoBadge") + "</span>" +
+                  "<span class='calc-warn' data-code='" + a.code + "'></span>" : "") + "</td>" +
+        "<td><input type='text' inputmode='decimal' data-code='" + a.code + "' class='amt-cny" +
+          (plan ? " amt-calc' readonly tabindex='-1" : "") + "' value='" + window.formatAmount(initial) + "'></td>" +
         "<td class='krw-cell' data-code='" + a.code + "'>" + krwPreview(initial) + "</td>";
       tbody.appendChild(tr);
     });
     updateDraftInfo(type, draft);
     var rateNote = document.getElementById("rateNote_" + type);
     if (rateNote) rateNote.style.display = exchangeRate ? "none" : "block";
+    var calcNote = document.getElementById("calcNote_" + type);
+    if (calcNote) calcNote.style.display = isAutoCalc(type) ? "block" : "none";
+    var legacyNote = document.getElementById("legacyNote_" + type);
+    if (legacyNote) legacyNote.style.display = calcModes[type] === "legacy" ? "block" : "none";
+    recalcTable(type);
+  }
+
+  // 명세행 값으로 합계행을 다시 계산해 화면에 반영합니다.
+  // 입력할 때마다 불리므로 DOM 조회는 tbody 하나로 한정합니다.
+  function recalcTable(type) {
+    if (!isAutoCalc(type)) return;
+    var tbody = document.getElementById("tbody_" + type);
+    if (!tbody) return;
+
+    var values = {};
+    tbody.querySelectorAll(".amt-cny").forEach(function (input) {
+      values[input.dataset.code] = Number(window.parseAmount(input.value)) || 0;
+    });
+    window.evalFormulas(formulaPlans[type], values);
+
+    var compare = compareValues[type] || {};
+    formulaPlans[type].forEach(function (plan) {
+      var input = tbody.querySelector('.amt-cny[data-code="' + plan.code + '"]');
+      // 0.1+0.2 류의 부동소수 찌꺼기가 화면에 나오지 않도록 소수 2자리에서 끊습니다.
+      // (String(1234.5) -> "1234.5" 처럼 불필요한 ".00"은 붙지 않습니다)
+      if (input) input.value = window.formatAmount(String(Math.round(values[plan.code] * 100) / 100));
+      var krwCell = tbody.querySelector('.krw-cell[data-code="' + plan.code + '"]');
+      if (krwCell) krwCell.textContent = krwPreview(values[plan.code]);
+
+      // 엑셀 원본 합계와 1원 넘게 벌어지면 노란 경고 (v5 3.8 / 5.4 ①)
+      var warn = tbody.querySelector('.calc-warn[data-code="' + plan.code + '"]');
+      if (!warn) return;
+      if (compare[plan.code] == null) {
+        warn.textContent = "";
+        warn.removeAttribute("title");
+        return;
+      }
+      var diff = values[plan.code] - Number(compare[plan.code]);
+      if (Math.abs(diff) <= 1) {
+        warn.textContent = "";
+        warn.removeAttribute("title");
+      } else {
+        warn.textContent = "⚠";
+        warn.title = t("calcCompareMismatch", {
+          excel: Number(compare[plan.code]).toLocaleString(),
+          diff: diff.toLocaleString()
+        });
+      }
+    });
   }
 
   function krwPreview(amountCny) {
@@ -230,7 +322,7 @@
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
       values[input.dataset.code] = window.parseAmount(input.value);
     });
-    var payload = { values: values };
+    var payload = { values: values, compare: compareValues[type] || {} };
     // PL_KR은 표 밖에 있는 인원수/접대비/출장비도 같이 보관해야 새로고침·언어전환에도 살아남습니다.
     if (type === "PL_KR") {
       payload.extra = {};
@@ -268,6 +360,7 @@
       var type = panel.dataset.panel;
       var krwCell = panel.querySelector('.krw-cell[data-code="' + e.target.dataset.code + '"]');
       if (krwCell) krwCell.textContent = krwPreview(e.target.value);
+      recalcTable(type);
       scheduleAutosave(type);
     });
 
@@ -300,6 +393,7 @@
       rows.forEach(function (r) {
         if (applyUpload(type, r.accountCode, r.amountCny)) n++;
       });
+      recalcTable(type);
       scheduleAutosave(type);
       showToast(t("uploadSuccess", { n: n }));
     }).catch(function () {
@@ -310,6 +404,14 @@
   function applyUpload(type, code, amount) {
     var el = document.querySelector('#tbody_' + type + ' .amt-cny[data-code="' + code + '"]');
     if (!el) return false;
+    // 자동계산행은 엑셀 값을 화면에 넣지 않고 **대조값**으로만 받습니다 (v5 3.8).
+    // 지점은 종전처럼 회계프로그램 표를 통째로 붙여 올리면 되고, 합계는 시스템이 다시 계산해
+    // 두 값을 자동으로 비교합니다.
+    if (formulaOf(type, code)) {
+      compareValues[type] = compareValues[type] || {};
+      compareValues[type][code] = Number(amount) || 0;
+      return true;
+    }
     el.value = window.formatAmount(amount);
     var krwCell = document.querySelector('#tbody_' + type + ' .krw-cell[data-code="' + code + '"]');
     if (krwCell) krwCell.textContent = krwPreview(amount);
@@ -360,9 +462,15 @@
     // 제출하면 바로 잠기므로, 세 칸이 비어 있으면 잠기기 전에 여기서 막습니다.
     if (type === "PL_KR" && !requirePlKrExtra()) return;
     if (!confirm(t("submitWarningConfirm"))) return;
+    recalcTable(type);
+    var compare = compareValues[type] || {};
     var lines = [];
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
-      lines.push({ accountCode: input.dataset.code, amountCny: Number(window.parseAmount(input.value)) || 0 });
+      var code = input.dataset.code;
+      var line = { accountCode: code, amountCny: Number(window.parseAmount(input.value)) || 0 };
+      // 대조값은 있을 때만 실어 보냅니다. 서버는 null이 오면 기존 대조값을 지우지 않고 유지합니다.
+      if (compare[code] != null) line.compareCny = compare[code];
+      lines.push(line);
     });
     client.rpc("submit_statement", {
       p_access_key: ctx.accessKey,
@@ -501,6 +609,8 @@
     existingLines = {};
     lockedTypes = [];
     plKrExtra = {};
+    calcModes = {};
+    compareValues = {};
     Promise.all([
       client.rpc("get_accounts", {}),
       client.rpc("get_statement", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
@@ -510,7 +620,17 @@
       client.rpc("get_submission_locks", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
     ]).then(function (results) {
       accounts = (results[0].data || []).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
-      (results[1].data || []).forEach(function (l) { existingLines[l.statementType + "::" + l.accountCode] = l.amountCny; });
+      STATEMENT_TYPES.forEach(function (type) {
+        formulaPlans[type] = window.buildFormulaPlan(accounts, type);
+        compareValues[type] = {};
+      });
+      (results[1].data || []).forEach(function (l) {
+        existingLines[l.statementType + "::" + l.accountCode] = l.amountCny;
+        if (l.compareCny != null) compareValues[l.statementType][l.accountCode] = l.compareCny;
+        // 이미 제출된 건은 최초 생성 시점의 계산모드를 그대로 따릅니다 (v5 5.2).
+        // 행이 하나도 없으면 계속 undefined로 남아 isAutoCalc()가 자동계산으로 판정합니다.
+        if (l.calcMode) calcModes[l.statementType] = l.calcMode;
+      });
       exchangeRate = results[2].data;
       closedMonths = results[3] || [];
       plKrExtra = results[4].data || {};

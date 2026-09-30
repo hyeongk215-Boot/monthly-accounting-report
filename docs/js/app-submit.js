@@ -92,7 +92,12 @@
     var sel = document.getElementById("ymSwitch");
     // 마감월은 선택지에서 뺍니다. 단 지금 보고 있는 달이 마감된 경우는 남겨야
     // select가 엉뚱한 값을 가리키지 않습니다(그 달은 마감 배너가 따로 뜹니다).
-    window.openYearMonths(closedMonths, ctx.yearmonth).forEach(function (ym) {
+    // openYearMonths 가 없으면(= 캐시된 옛 common.js) 전체 월을 보여줍니다.
+    // 없는 채로 호출하면 예외로 선택지가 통째로 비어 달을 못 바꾸게 됩니다.
+    var ymList = window.openYearMonths
+      ? window.openYearMonths(closedMonths, ctx.yearmonth)
+      : window.generateYearMonths();
+    ymList.forEach(function (ym) {
       var o = document.createElement("option");
       o.value = ym;
       o.textContent = closedMonths.indexOf(ym) === -1 ? ym : ym + " " + t("ymClosedSuffix");

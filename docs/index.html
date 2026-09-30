@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>회계관리</title>
-<link rel="stylesheet" href="css/style.css?v=202610161402">
+<link rel="stylesheet" href="css/style.css?v=202609301409">
 <script>document.documentElement.setAttribute("data-theme", localStorage.getItem("erpTheme") === "dark" ? "dark" : "light");</script>
 </head>
 <body>
@@ -74,10 +74,10 @@
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="js/config.js?v=202610161402"></script>
+<script src="js/config.js?v=202609301409"></script>
 <script src="vendor/supabase.js"></script>
-<script src="js/i18n.js?v=202610161402"></script>
-<script src="js/common.js?v=202610161402"></script>
+<script src="js/i18n.js?v=202609301409"></script>
+<script src="js/common.js?v=202609301409"></script>
 <script>
 function fillSelect(sel, list, placeholderKey) {
   var prev = sel.value;
@@ -132,7 +132,13 @@ function init() {
   refreshOfficeOptions();
   var ymSel = document.getElementById("yearmonth");
   var hadYm = ymSel.value;
-  fillSelect(ymSel, window.openYearMonths(closedMonths), "selectPlaceholder");
+  // openYearMonths 가 없으면(= 캐시된 옛 common.js 가 로드된 경우) 전체 월을 보여줍니다.
+  // 없는 채로 호출하면 예외가 나면서 선택지가 통째로 비어 아무 달도 못 고르게 됩니다.
+  // 마감 차단은 서버에서 다시 하므로 전체가 보이는 쪽이 안전합니다.
+  var ymList = window.openYearMonths
+    ? window.openYearMonths(closedMonths)
+    : window.generateYearMonths();
+  fillSelect(ymSel, ymList, "selectPlaceholder");
   ymSel.value = hadYm || window.defaultYearMonth();
   // 직전 선택이 그 사이 마감되어 목록에서 빠졌으면 value가 ""가 됩니다.
   // 전월로 되돌리고, 그것마저 마감이면 placeholder를 남겨 직접 고르게 합니다.

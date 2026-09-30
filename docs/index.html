@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>회계관리</title>
-<link rel="stylesheet" href="css/style.css?v=202609281629">
+<link rel="stylesheet" href="css/style.css?v=202609301400">
 <script>document.documentElement.setAttribute("data-theme", localStorage.getItem("erpTheme") === "dark" ? "dark" : "light");</script>
 </head>
 <body>
@@ -74,10 +74,10 @@
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="js/config.js?v=202609281629"></script>
+<script src="js/config.js?v=202609301400"></script>
 <script src="vendor/supabase.js"></script>
-<script src="js/i18n.js?v=202609281629"></script>
-<script src="js/common.js?v=202609281629"></script>
+<script src="js/i18n.js?v=202609301400"></script>
+<script src="js/common.js?v=202609301400"></script>
 <script>
 function fillSelect(sel, list, placeholderKey) {
   var prev = sel.value;
@@ -123,16 +123,27 @@ function refreshOfficeOptions() {
   var list = corp ? officesForCorp(corp) : [];
   fillLocalizedSelect(document.getElementById("office"), list, "selectPlaceholder");
 }
+// 마감된 월은 선택지에 아예 넣지 않습니다. 골라도 서버가 막으므로 보여봐야
+// 입력 혼선만 생깁니다. 조회가 끝나기 전에는 비어 있어 전체 월이 보이지만,
+// 실제 차단은 서버(submit_statement)에서 다시 하므로 안전합니다.
+var closedMonths = [];
 function init() {
   fillLocalizedSelect(document.getElementById("corp"), window.APP_CONFIG.CORPORATIONS, "selectPlaceholder");
   refreshOfficeOptions();
   var ymSel = document.getElementById("yearmonth");
   var hadYm = ymSel.value;
-  fillSelect(ymSel, window.generateYearMonths(), "selectPlaceholder");
+  fillSelect(ymSel, window.openYearMonths(closedMonths), "selectPlaceholder");
   ymSel.value = hadYm || window.defaultYearMonth();
+  // 직전 선택이 그 사이 마감되어 목록에서 빠졌으면 value가 ""가 됩니다.
+  // 전월로 되돌리고, 그것마저 마감이면 placeholder를 남겨 직접 고르게 합니다.
+  if (!ymSel.value) ymSel.value = window.defaultYearMonth();
 }
 document.addEventListener("DOMContentLoaded", function () {
   init();
+  window.fetchClosedMonths().then(function (list) {
+    closedMonths = list || [];
+    init();
+  });
   document.addEventListener("langchange", init);
   document.getElementById("corp").addEventListener("change", refreshOfficeOptions);
 

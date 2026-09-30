@@ -47,6 +47,21 @@ window.recentYearMonths = function (n) {
   return list;
 };
 
+// 마감되지 않은 월만 추린 목록 - 입력 화면의 년월 선택지에 씁니다.
+// 마감월은 골라도 서버(submit_statement)가 막으므로, 목록에 남겨두면 "왜 안 되지"라는
+// 혼선만 생깁니다. 아예 보이지 않게 합니다.
+//   keepYm: 지금 그 달을 보고 있는 경우. 목록에서 빼버리면 select가 엉뚱한 값을 가리키게
+//           되므로 예외적으로 남겨둡니다(호출측에서 "마감됨" 표시를 붙입니다).
+// ※ 관리자 화면(app-admin.js)은 마감 해제를 해야 하므로 이 함수를 쓰지 않습니다.
+// ※ closedMonths 조회가 실패하면 빈 배열이 넘어와 전체 월이 보입니다. 표시만 관대해질 뿐
+//    실제 차단은 서버에서 다시 하므로 안전합니다.
+window.openYearMonths = function (closedMonths, keepYm) {
+  var closed = closedMonths || [];
+  return window.generateYearMonths().filter(function (ym) {
+    return closed.indexOf(ym) === -1 || ym === keepYm;
+  });
+};
+
 // ===== 월 마감 여부 조회 (공개 RPC) =====
 // 실패 시 빈 배열 반환 - 실제 마감 강제는 서버(submit_statement RPC)에서도 다시 검사합니다.
 window.fetchClosedMonths = function () {

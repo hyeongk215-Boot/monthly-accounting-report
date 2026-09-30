@@ -86,6 +86,7 @@ window.I18N = {
 
     adminMonthStatus: "이 달 상태",
     adminMonthOpenBadge: "진행중",
+    ymClosedSuffix: "(마감됨)",
     adminMonthClosedBadge: "마감됨",
     adminCloseMonthBtn: "이 달 마감하기",
     adminReopenMonthBtn: "마감 해제",
@@ -243,6 +244,7 @@ window.I18N = {
 
     adminMonthStatus: "本月状态",
     adminMonthOpenBadge: "进行中",
+    ymClosedSuffix: "(已截止)",
     adminMonthClosedBadge: "已截止",
     adminCloseMonthBtn: "截止本月",
     adminReopenMonthBtn: "解除截止",

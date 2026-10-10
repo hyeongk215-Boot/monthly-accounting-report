@@ -1,0 +1,54 @@
+# ERP 데이터베이스(Supabase 무료 플랜) 일시정지 방지용 백업 호출.
+#
+# - 무료 프로젝트는 7일 이상 호출이 없으면 자동 일시정지되고, 그러면 모든 지점이 로그인할 수 없다.
+# - 주 수단은 Hermes 크론(erp-keepalive)이고, 이 워크플로는 그 PC가 꺼져 있어도 동작하는 백업이다.
+# - ERP 접근키(KEY)는 사용하지 않는다. 사이트 코드(docs/js/config.js)에 이미 공개돼 있는 조회용
+#   publishable key와, 키가 필요 없는 읽기 전용 공개 RPC 2건만 호출한다. 쓰기 호출은 없다.
+# - 호출이 실패하면(프로젝트 정지 등) 실행이 실패로 표시되고 GitHub 알림이 간다.
+name: ERP keep-alive (Supabase)
+
+on:
+  schedule:
+    - cron: "37 2 * * *"   # 매일 02:37 UTC (중국 10:37 / 한국 11:37). 정각을 피해 지연을 줄인다.
+  workflow_dispatch:         # Actions 탭에서 수동 실행(테스트용)
+
+permissions:
+  contents: read
+  actions: write             # 맨 아래 "다시 활성화" 단계에서만 사용
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: https://pobpxmqobeqrvuncobnh.supabase.co
+      API_KEY: sb_publishable_bMGDHv8z9Shw1IJ39Wj10w_0O3G2g6U   # 조회용 공개키 (ERP 접근키 아님)
+    steps:
+      - name: Call 2 read-only RPCs
+        run: |
+          fail=0
+          for fn in get_closed_months get_budget_closed_months; do
+            ok=0
+            for attempt in 1 2 3; do
+              code=$(curl -s -m 20 -o body.json -w "%{http_code}" -X POST \
+                "$BASE_URL/rest/v1/rpc/$fn" \
+                -H "apikey: $API_KEY" -H "Content-Type: application/json" -d '{}') || code=000
+              if [ "$code" = "200" ] && python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(open("body.json")), list) else 1)'; then
+                echo "$fn: OK (HTTP $code)"
+                ok=1
+                break
+              fi
+              echo "$fn: attempt $attempt failed (HTTP $code)"
+              [ "$attempt" -lt 3 ] && sleep 60
+            done
+            [ "$ok" = 1 ] || fail=1
+          done
+          exit $fail
+
+      # 공개 저장소는 60일간 저장소 활동이 없으면 예약 실행이 자동으로 꺼진다.
+      # 실행할 때마다 자기 자신을 다시 활성화해 그 타이머를 늦춘다. (실패해도 무시하는 보조 장치)
+      - name: Keep this scheduled workflow enabled (best effort)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/erp-keepalive.yml/enable" || true

@@ -1,28 +1,37 @@
--- 테스트용 접근키 시드. schema.sql 실행 후 실행하세요.
--- ⚠ 아래 평문 키(TESTADMIN123 등)는 로컬/데모 테스트 전용입니다. 실제 배포 전 반드시
--- 새 키를 발급하고(admin.html 또는 SQL로 직접 access_keys에 insert) 이 시드는 지우거나 비활성화하세요.
+-- 접근키 발급 템플릿 — 이 파일에는 실제 키도, 테스트 키도 들어 있지 않습니다.
+-- (아래 내용이 전부 주석이라 이 파일을 그대로 실행해도 아무것도 삽입되지 않습니다.)
+--
+-- ⚠ 이 저장소는 공개(public)입니다. 평문 접근키(KEY)를 이 파일을 포함해 어떤 파일에도 적어서
+--    커밋하지 마세요. 키가 한 번이라도 올라가면 그 키는 폐기하고 새로 발급해야 합니다.
+--
+-- 사용법
+--   1) 이 파일을 저장소 "밖"의 로컬 폴더로 복사합니다.
+--   2) 복사본에서 주석(--)을 풀고, <임의키> 자리를 직접 만든 10자리 이상의 무작위 문자열로 바꿉니다.
+--   3) Supabase SQL Editor의 "New query"(새 쿼리)에 붙여넣어 실행합니다.
+--      (SQL Editor에 저장된 예전 쿼리를 다시 실행하지 마세요.)
+--   4) 실행한 뒤 복사본은 비밀번호 관리자 등에 보관하거나 삭제합니다. 저장소 안에 두지 않습니다.
+--
+-- DB에는 키 자체가 아니라 SHA-256 해시만 저장됩니다. 분실한 키는 복구할 수 없으므로 새로 발급해야 합니다.
+--
+-- role 값
+--   'system_admin'   모든 법인/지점 + 계정과목 교체 등 최고 권한
+--   'finance'        본사 회계 (모든 법인/지점 조회·제출·마감·환율설정, 계정과목 교체는 불가)
+--   'branch_yjc' / 'branch_heunga' / 'branch_shanghai' / 'branch_yunfeng' / 'branch_qingdao' / 'branch_changxing'
+--                    해당 법인(branch_scope)만, office_scope가 있으면 그 지점만 제출/조회
+-- branch_scope : 법인명(config.js의 CORPORATIONS.ko 값, 예: 'YJC 포워딩'). null이면 전체 법인.
+-- office_scope : 지점명(예: '상해'). null이면 branch_scope 법인의 모든 지점.
 
--- 시스템관리자 (모든 법인, 계정과목 교체 등 최고 권한)
-insert into access_keys (key_hash, label, role, branch_scope)
-values (encode(digest('TESTADMIN123', 'sha256'), 'hex'), '테스트 시스템관리자', 'system_admin', null)
-on conflict (key_hash) do nothing;
+-- 예) 시스템 관리자 키 1개
+-- insert into access_keys (key_hash, label, role, branch_scope)
+-- values (encode(digest('<임의키>', 'sha256'), 'hex'), 'ADMIN', 'system_admin', null)
+-- on conflict (key_hash) do nothing;
 
--- 본사 회계담당 (모든 법인 조회/마감/환율설정 가능, 계정과목 교체는 불가)
-insert into access_keys (key_hash, label, role, branch_scope)
-values (encode(digest('TESTFINANCE1', 'sha256'), 'hex'), '테스트 본사회계', 'finance', null)
-on conflict (key_hash) do nothing;
+-- 예) 본사 회계 키
+-- insert into access_keys (key_hash, label, role, branch_scope)
+-- values (encode(digest('<임의키>', 'sha256'), 'hex'), 'FIN1', 'finance', null)
+-- on conflict (key_hash) do nothing;
 
--- 지점 담당 예시 (해당 법인의 모든 지점 데이터를 제출/조회 가능 - office_scope가 null)
-insert into access_keys (key_hash, label, role, branch_scope) values
-  (encode(digest('TESTYJC0001', 'sha256'), 'hex'), '테스트 YJC포워딩담당', 'branch_yjc', 'YJC 포워딩'),
-  (encode(digest('TESTSHC0001', 'sha256'), 'hex'), '테스트 상해물류센터담당', 'branch_shanghai', '상해물류센터'),
-  (encode(digest('TESTHAJ0001', 'sha256'), 'hex'), '테스트 흥아물류담당', 'branch_heunga', '흥아물류'),
-  (encode(digest('TESTYFG0001', 'sha256'), 'hex'), '테스트 윤봉물류담당', 'branch_yunfeng', '윤봉물류'),
-  (encode(digest('TESTQDC0001', 'sha256'), 'hex'), '테스트 청도CY담당', 'branch_qingdao', '청도 CY'),
-  (encode(digest('TESTCXC0001', 'sha256'), 'hex'), '테스트 창씽CY담당', 'branch_changxing', '창씽 CY')
-on conflict (key_hash) do nothing;
-
--- 지점(사무소) 단위로 더 좁게 스코프를 준 예시 - office_scope가 있으면 그 지점 데이터만 제출/조회 가능
-insert into access_keys (key_hash, label, role, branch_scope, office_scope) values
-  (encode(digest('TESTYJCSHA01', 'sha256'), 'hex'), '테스트 YJC포워딩-상해지점담당', 'branch_yjc', 'YJC 포워딩', '상해')
-on conflict (key_hash) do nothing;
+-- 예) 특정 지점 전용 키 (법인 + 지점 제한)
+-- insert into access_keys (key_hash, label, role, branch_scope, office_scope)
+-- values (encode(digest('<임의키>', 'sha256'), 'hex'), '설명', 'branch_yjc', 'YJC 포워딩', '상해')
+-- on conflict (key_hash) do nothing;

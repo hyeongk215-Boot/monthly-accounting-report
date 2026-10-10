@@ -95,8 +95,8 @@ statement_type을 새로 추가했습니다.
     파일 그대로 업로드(YJC/상해물류센터) 또는 빈 양식 업로드(그 외 법인)
   - `admin.html` — [본사용] 접근키로 로그인 후 지점별 집계 조회 또는 법인 통합 조회, 제출현황,
     환율설정, 월마감, 계정과목 관리, 엑셀 다운로드
-- `supabase/` — 테이블/함수 정의 (`schema.sql`), 실제 계정과목(`seed_accounts.sql`), 테스트
-  접근키(`seed_access_keys.sql`)
+- `supabase/` — 테이블/함수 정의 (`schema.sql`), 실제 계정과목(`seed_accounts.sql`), 접근키
+  발급 템플릿(`seed_access_keys.sql` — 평문 키 없음, 전부 주석)
 
 ## 배포 방법
 `supabase/README-deploy.md`를 따라 Supabase에 스키마를 적용한 뒤,
@@ -121,8 +121,15 @@ python -m http.server 8090 --directory docs
 
 ## 접근키
 평문 키는 서버에 저장되지 않고 해시만 저장됩니다. 발급/교체 방법은 `supabase/README-deploy.md`
-"접근키 발급/교체" 섹션을 참고하세요. 테스트용 키는 `supabase/seed_access_keys.sql`에 있습니다
-(실제 운영 전 반드시 교체).
+"접근키 발급/교체" 섹션을 참고하세요. `supabase/seed_access_keys.sql`은 평문 키가 없는 발급
+템플릿입니다. **이 저장소는 공개이므로 실제 접근키는 어떤 파일에도 적어서 커밋하지 마세요.**
+
+## 데이터베이스 자동 정지 방지
+Supabase 무료 프로젝트는 7일 이상 호출이 없으면 자동으로 일시정지되고, 그러면 모든 지점의
+로그인 화면이 "접근키가 올바르지 않습니다"로 보입니다. `.github/workflows/erp-keepalive.yml`이
+매일 읽기 전용 공개 RPC 2건을 호출해 이를 막는 백업입니다(주 수단은 별도 PC의 정기 호출).
+실패하면 GitHub Actions 탭에서 해당 실행이 실패로 표시됩니다. 정지됐다면 Supabase 대시보드에서
+**Resume project**를 누르면 데이터와 접근키는 그대로 복구됩니다.
 
 ## 커스터마이징
 - 법인/지점 목록: `docs/js/config.js`의 `CORPORATIONS`/`OFFICES`

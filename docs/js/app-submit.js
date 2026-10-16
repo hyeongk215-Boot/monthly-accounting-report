@@ -14,6 +14,7 @@
   var closedMonths = [];
   var lockedTypes = [];       // 이 법인/지점/월에 이미 제출되어 잠긴 제표종류 목록
   var plKrExtra = {};         // { headcount, entertainmentCny } (get_pl_kr_extra 프리필)
+  var staleDraftTypes = {};   // type -> true: 이미 제출돼 잠긴 탭이라 이 PC의 옛 임시저장본을 버린 경우(안내 표시용)
 
   // ===== 자동계산 (阶段一 · 财务报表自动计算 方案 v5) =====
   var formulaPlans = {};      // type -> 위상정렬된 공식 목록 (buildFormulaPlan)
@@ -195,6 +196,7 @@
       '<div class="tab-panel' + (type === activeTabType() ? " tab-active" : "") + '" data-panel="' + type + '">' +
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
         '<div class="note-box" id="lockNote_' + type + '" style="display:none;">' + t("submissionLockedBanner") + "</div>" +
+        '<div class="note-box" id="staleNote_' + type + '" style="display:none;">' + t("staleDraftNote") + "</div>" +
         '<div class="note-box" id="calcNote_' + type + '" style="display:none;">' + t("calcAutoNote") + "</div>" +
         '<div class="note-box" id="legacyNote_' + type + '" style="display:none;">' + t("calcLegacyNote") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +
@@ -214,6 +216,8 @@
             t("draftSaveBtn") + "</button>" +
           '<span class="draft-info" id="draftInfo_' + type + '"></span>' +
         "</div>" +
+        // 마우스를 올려야 보이는 툴팁만으로는 "다른 사람도 보겠지"라는 오해를 막지 못해 상시 문구로 둡니다.
+        '<p style="margin:6px 0 0; font-size:12px; color:var(--muted);">' + t("draftScopeNote") + "</p>" +
       "</div>"
     );
   }
@@ -226,7 +230,20 @@
   function renderTable(type) {
     var tbody = document.getElementById("tbody_" + type);
     var rows = accounts.filter(function (a) { return a.statementType === type; });
-    var draft = window.loadDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type));
+    var dKey = window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type);
+    var draft = window.loadDraft(dKey);
+    // 제출이 끝나 잠긴 탭은 언제나 서버 값을 보여줍니다. 이 PC에 남아 있던 옛 초안(표의 values/compare)은
+    // 쓰지 않고 지웁니다. 초안을 우선하면 다른 사람이 제출한 뒤에도 이 PC의 초안(빈 칸·옛 숫자)이 제출된
+    // 값을 가려서 "제출했는데 안 보인다"가 됩니다. 단 PL(한국)의 보완입력용 extra는 남겨 둡니다.
+    if (isLocked(type) && draft && (draft.values || draft.compare)) {
+      if (draft.extra) {
+        localStorage.setItem(dKey, JSON.stringify({ extra: draft.extra, _savedAt: draft._savedAt }));
+      } else {
+        window.clearDraft(dKey);
+      }
+      draft = null;
+      staleDraftTypes[type] = true;
+    }
     // 초안에 담아둔 대조값을 되살립니다(업로드 후 새로고침해도 경고가 유지되도록).
     compareValues[type] = (draft && draft.compare) || compareValues[type] || {};
     tbody.innerHTML = "";
@@ -235,8 +252,10 @@
       var plan = formulaOf(type, a.code);
       if (a.isSubtotal) tr.className = "subtotal-row";
       var draftVal = draft && draft.values ? draft.values[a.code] : undefined;
+      // 초안의 빈 칸("")은 입력한 값이 아니라 아직 안 채웠다는 뜻입니다. 서버 값을 가리지 않게 합니다.
+      var hasDraftVal = draftVal !== undefined && draftVal !== null && String(draftVal).trim() !== "";
       var lineKey = type + "::" + a.code;
-      var initial = draftVal !== undefined ? draftVal : (existingLines[lineKey] !== undefined ? existingLines[lineKey] : "");
+      var initial = hasDraftVal ? draftVal : (existingLines[lineKey] !== undefined ? existingLines[lineKey] : "");
       // 자동계산행은 readonly로 두되 input 자체는 남겨둡니다 — 제출 시 값을 모으는 코드와
       // KRW 미리보기가 .amt-cny 기준으로 돌아가고 있어서 구조를 바꾸면 더 위험합니다.
       tr.innerHTML =
@@ -250,6 +269,8 @@
       tbody.appendChild(tr);
     });
     updateDraftInfo(type, draft);
+    var staleNote = document.getElementById("staleNote_" + type);
+    if (staleNote) staleNote.style.display = staleDraftTypes[type] ? "block" : "none";
     var rateNote = document.getElementById("rateNote_" + type);
     if (rateNote) rateNote.style.display = exchangeRate ? "none" : "block";
     var calcNote = document.getElementById("calcNote_" + type);
@@ -614,6 +635,7 @@
     plKrExtra = {};
     calcModes = {};
     compareValues = {};
+    staleDraftTypes = {};
     Promise.all([
       client.rpc("get_accounts", {}),
       client.rpc("get_statement", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),

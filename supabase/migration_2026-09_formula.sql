@@ -95,9 +95,12 @@ update acct_accounts set formula = '[BS-R47]+[BS-R56]'
 -- BS-R54(본년이윤) / BS-R55(미분배이익)은 阶段二의 跨表·结转 대상이라 여기서는 수기 입력 유지.
 
 -- ----- CF (10행) -----
-update acct_accounts set formula = '[CF-01]+[CF-03]+[CF-08]+[CF-91]'
+-- CF-91/CF-92(내부거래)는 소계에 넣지 않습니다. line_no 가 없는 참고용 줄이고,
+-- 금액은 이미 CF-08 / CF-18 안에 포함돼 있어 더하면 이중계상이 됩니다.
+-- (2026-10-16 수정 - 당초 공식에 넣었던 것은 오류였습니다. fix_cf_internal_2026-10.sql 참조)
+update acct_accounts set formula = '[CF-01]+[CF-03]+[CF-08]'
  where statement_type = 'CF' and code = 'CF-09';
-update acct_accounts set formula = '[CF-10]+[CF-12]+[CF-13]+[CF-18]+[CF-92]'
+update acct_accounts set formula = '[CF-10]+[CF-12]+[CF-13]+[CF-18]'
  where statement_type = 'CF' and code = 'CF-20';
 update acct_accounts set formula = '[CF-09]-[CF-20]'
  where statement_type = 'CF' and code = 'CF-21';

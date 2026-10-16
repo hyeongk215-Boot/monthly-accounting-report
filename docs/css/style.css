@@ -334,3 +334,38 @@ table.report-table td.col-label, table.report-table th.col-label { text-align: l
 table.report-table td.col-amt, table.report-table th.col-amt { text-align: right; }
 table.report-table td.col-blank { background: var(--surface-2); border: none; }
 table.report-table td.subtotal-cell { background: var(--surface-2); font-weight: 700; }
+
+/* ===== 회계관리 전용: 월별 제출 현황표 (3단계) =====
+   입력 화면 맨 위 카드. 월 × 제표 4종의 제출 상태를 한눈에 보여주고, 칸을 누르면 그 달·그 표로 이동합니다.
+   ⚠ table.exp-table tbody tr:hover td 의 배경(회색)이 상태 색을 덮지 않도록 선택자를 한 단계 더 구체적으로 씁니다. */
+.ov-summary { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; }
+.ov-summary:empty { display: none; }
+#myChecklistBody details > summary {
+  cursor: pointer; font-size: 13px; font-weight: 600; color: var(--primary); padding: 4px 0;
+}
+.ov-filters { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0; }
+.ov-filters label {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-weight: 500; color: var(--text); cursor: pointer;
+}
+.ov-wrap { max-height: 480px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+table.exp-table.ov-table { min-width: 560px; }
+table.exp-table.ov-table thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+table.exp-table.ov-table td.ov-month { font-weight: 600; white-space: nowrap; text-align: left; }
+/* 좁은 화면에서 옆으로 밀어도 달 이름은 왼쪽에 고정 */
+table.exp-table.ov-table td.ov-month,
+table.exp-table.ov-table thead th:first-child { position: sticky; left: 0; background: var(--card); }
+table.exp-table.ov-table thead th:first-child { z-index: 2; }
+table.exp-table.ov-table td.ov-month { z-index: 1; }
+table.exp-table.ov-table td.ov-cell { cursor: pointer; line-height: 1.35; }
+table.exp-table.ov-table td.ov-cell:hover { filter: brightness(0.94); }
+table.exp-table.ov-table td.ov-cell small {
+  display: block; font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap;
+}
+table.exp-table.ov-table td.ov-submitted { background: var(--ok-bg); color: var(--ok); }
+table.exp-table.ov-table td.ov-draft,
+table.exp-table.ov-table td.ov-partial { background: var(--warn-bg); color: var(--warn); }
+table.exp-table.ov-table td.ov-partial { font-weight: 600; }
+table.exp-table.ov-table td.ov-missing { background: var(--danger-bg); color: var(--danger); }
+table.exp-table.ov-table td.ov-closed { background: var(--surface-2); color: var(--muted); }
+table.exp-table.ov-table tr.ov-current td.ov-month { background: var(--primary-bg); box-shadow: inset 3px 0 0 var(--primary); }

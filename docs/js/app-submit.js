@@ -29,6 +29,20 @@
   var saveQueued = {};        // type -> true: 진행 중에 입력이 더 있어 끝나면 한 번 더 저장해야 함
   var serverSaveTimers = {};
   var SERVER_SAVE_DELAY = 3000;   // 마지막 입력 후 3초 뒤 서버에 저장(키 입력마다 보내지 않기 위함)
+  var autosavePending = {};       // type -> true: 이 PC 자동저장(0.6초 뒤) 대기 중 — 달을 옮기기 전에 먼저 비워야 함
+
+  // ===== 월별 제출 현황표 (3단계) =====
+  // get_submission_overview 가 있으면 "최근 3개월" 카드 대신 전체 월 × 제표 4종 현황표를 보여줍니다.
+  // 함수가 없거나 실패하면 예전의 최근 3개월 카드(renderMyChecklist)로 폴백합니다.
+  var overviewMode = false;
+  var overviewSupported = true;   // 서버에 get_submission_overview 가 없으면(PGRST202) false — 이후엔 다시 부르지 않습니다
+  var overviewSeq = 0;            // 읽기 요청 번호: 늦게 도착한 옛 응답이 새 응답을 덮어쓰지 않도록
+  var overviewCells = {};         // "YYYY-MM|TYPE" -> { state: submitted|draft|partial, by, at }
+  var overviewClosed = [];        // 마감된 달 목록
+  var overviewTimer = null;
+  var ovOpen = false;             // 상세 표를 펼쳤는지(다시 그려도 유지)
+  var ovShowClosed = false;       // 마감된 달도 보기
+  var ovOnlyMissing = false;      // 미제출이 있는 달만 보기
 
   // ===== 자동계산 (阶段一 · 财务报表自动计算 方案 v5) =====
   var formulaPlans = {};      // type -> 위상정렬된 공식 목록 (buildFormulaPlan)
@@ -96,6 +110,225 @@
     });
   }
 
+  function escHtml(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  // from~to(포함) 사이의 'YYYY-MM' 목록(오름차순)
+  function monthsBetween(from, to) {
+    var out = [];
+    var y = Number(from.slice(0, 4)), m = Number(from.slice(5, 7));
+    var ey = Number(to.slice(0, 4)), em = Number(to.slice(5, 7));
+    while (y < ey || (y === ey && m <= em)) {
+      out.push(y + "-" + String(m).padStart(2, "0"));
+      m++;
+      if (m > 12) { m = 1; y++; }
+    }
+    return out;
+  }
+
+  // 현황표가 다루는 기간: 시스템 시작월 ~ 전월(이미 제출했어야 하는 달까지)
+  function overviewRange() {
+    var from = window.MIN_YEARMONTH;
+    var to = window.defaultYearMonth();
+    return { from: from, to: to < from ? from : to };
+  }
+
+  function setChecklistHeading(overview) {
+    var h = document.getElementById("checklistHeading");
+    if (!h) return;
+    var key = overview ? "overviewHeading" : "myChecklistHeading";
+    h.setAttribute("data-i18n", key);
+    h.textContent = t(key);
+  }
+
+  // 서버에서 현황(+마감월)을 읽어 표를 그립니다. 함수가 없거나 실패하면 예전의 "최근 3개월" 카드로 폴백합니다.
+  function refreshOverview() {
+    var rg = overviewRange();
+    var mySeq = ++overviewSeq;
+    return Promise.all([
+      client.rpc("get_submission_overview", {
+        p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_from: rg.from, p_to: rg.to
+      }).then(function (r) { return r; }, function () { return { error: { message: "network" } }; }),
+      window.fetchClosedMonths()
+    ]).then(function (res) {
+      if (mySeq !== overviewSeq) return;     // 더 새로운 읽기가 시작됐다 → 이 응답은 버립니다
+      var r = res[0] || {};
+      if (r.error || !Array.isArray(r.data)) {
+        var msg = String((r.error && r.error.message) || "");
+        if (String((r.error && r.error.code) || "") === "PGRST202" || msg.indexOf("Could not find the function") !== -1) {
+          overviewSupported = false;         // SQL 미적용: 이 화면을 연 동안은 다시 묻지 않습니다
+        }
+        overviewMode = false;
+        setChecklistHeading(false);
+        renderMyChecklist();
+        return;
+      }
+      overviewMode = true;
+      overviewClosed = res[1] || [];
+      overviewCells = {};
+      r.data.forEach(function (c) { overviewCells[c.yearmonth + "|" + c.statementType] = c; });
+      setChecklistHeading(true);
+      renderOverview();
+    });
+  }
+
+  // 임시저장·삭제처럼 상태가 바뀐 뒤 잠시 모아서 한 번만 다시 읽습니다.
+  // 현황표를 쓸 수 없는 상태(SQL 미적용)면 아무것도 하지 않습니다 — 예전 카드는 제출 여부만 보여주므로 다시 그릴 필요가 없습니다.
+  function scheduleOverviewRefresh(delay) {
+    if (!overviewSupported) return;
+    clearTimeout(overviewTimer);
+    overviewTimer = setTimeout(refreshOverview, delay == null ? 800 : delay);
+  }
+
+  // 제출(잠금)로 상태가 바뀐 뒤: 현황표가 있으면 그것을, 없으면 예전의 "최근 3개월" 카드를 갱신합니다.
+  function refreshChecklistAfterSubmit() {
+    if (overviewSupported) scheduleOverviewRefresh(300); else renderMyChecklist();
+  }
+
+  // 칸 하나의 표시 상태. 마감된 달에서 제출 안 된 칸은 지점이 할 수 있는 일이 없으니 "마감"으로 표시합니다.
+  function cellView(ym, type) {
+    var c = overviewCells[ym + "|" + type];
+    var closed = overviewClosed.indexOf(ym) !== -1;
+    if (closed && (!c || c.state !== "submitted")) return { state: "closed", cell: c || null };
+    if (c) return { state: c.state, cell: c };
+    return { state: "missing", cell: null };
+  }
+
+  // 칸 안의 표시: 상태 + (있으면) 누가·언제. 마우스를 올릴 수 없는 모바일에서도 보이도록 칸 안에 직접 적습니다.
+  function overviewCellHtml(v) {
+    var label;
+    if (v.state === "submitted") label = "✅ " + t("overviewStateSubmitted");
+    else if (v.state === "draft") label = "✏️ " + t("overviewStateDraft");
+    else if (v.state === "partial") label = "⚠ " + t("overviewStatePartial");
+    else if (v.state === "closed") label = "🔒 " + t("overviewStateClosed");
+    else label = t("overviewStateMissing");
+    var who = "";
+    if (v.cell && v.state !== "closed") {
+      var when = v.cell.at ? window.formatSavedAt(v.cell.at).slice(5) : "";   // 'MM-DD HH:mm'
+      var line = [v.cell.by || "", when].filter(Boolean).join(" · ");
+      if (line) who = "<small>" + escHtml(line) + "</small>";
+    }
+    return label + who;
+  }
+
+  function overviewCellTip(v) {
+    var by = v.cell ? (v.cell.by || "") : "";
+    var time = v.cell && v.cell.at ? window.formatSavedAt(v.cell.at) : "";
+    if (v.state === "submitted") return t("overviewTipSubmitted", { by: by, time: time });
+    if (v.state === "draft") return t("overviewTipDraft", { by: by, time: time });
+    if (v.state === "partial") return t("overviewTipPartial", { by: by, time: time });
+    if (v.state === "closed") return t("overviewTipClosed");
+    return t("overviewTipMissing");
+  }
+
+  function renderOverview() {
+    var body = document.getElementById("myChecklistBody");
+    if (!body) return;
+    var oldDetails = body.querySelector("#ovDetails");
+    if (oldDetails) ovOpen = oldDetails.open;                        // 다시 그리기 전에 지금 펼쳐져 있는지 기억
+    var oldWrap = body.querySelector(".ov-wrap");
+    var keepTop = oldWrap ? oldWrap.scrollTop : 0;                   // 표 안의 스크롤 위치도 기억(저장할 때마다 맨 위로 튀지 않게)
+    var rg = overviewRange();
+    var months = monthsBetween(rg.from, rg.to).reverse();            // 최근 달이 위로
+    var openMonths = months.filter(function (ym) { return overviewClosed.indexOf(ym) === -1; });
+
+    // 집계는 마감되지 않은 달만: 마감된 달은 지점이 더 할 수 있는 일이 없다.
+    var done = 0, drafting = 0, missing = 0, next = null;
+    openMonths.slice().reverse().forEach(function (ym) {              // 가장 오래된 달부터 훑어 "다음 할 일"을 찾는다
+      STATEMENT_TYPES.forEach(function (type) {
+        var v = cellView(ym, type);
+        if (v.state === "submitted") done++;
+        else {
+          if (v.state === "draft" || v.state === "partial") drafting++; else missing++;
+          if (!next) next = { ym: ym, type: type };
+        }
+      });
+    });
+    var total = openMonths.length * STATEMENT_TYPES.length;
+
+    var summary = "";
+    if (total > 0 && done === total) {
+      summary = "<span style='color:var(--ok); font-weight:600;'>" + t("overviewAllDone") + "</span>";
+    } else if (total > 0) {
+      summary = t("overviewSummary", { done: done, total: total, draft: drafting, missing: missing });
+    }
+
+    var rows = months.filter(function (ym) {
+      var isClosed = overviewClosed.indexOf(ym) !== -1;
+      if (isClosed && !ovShowClosed) return false;
+      if (ovOnlyMissing) {
+        return STATEMENT_TYPES.some(function (type) {
+          var s = cellView(ym, type).state;
+          return s !== "submitted" && s !== "closed";
+        });
+      }
+      return true;
+    }).map(function (ym) {
+      var cells = STATEMENT_TYPES.map(function (type) {
+        var v = cellView(ym, type);
+        return "<td class='ov-cell ov-" + v.state + "' data-ym='" + ym + "' data-type='" + type + "' title='" +
+          escHtml(overviewCellTip(v)) + "'>" + overviewCellHtml(v) + "</td>";
+      }).join("");
+      return "<tr class='" + (ym === ctx.yearmonth ? "ov-current" : "") + "'><td class='ov-month'>" + ym +
+        (overviewClosed.indexOf(ym) !== -1 ? " 🔒" : "") + "</td>" + cells + "</tr>";
+    }).join("");
+
+    var head = "<th>" + t("overviewColMonth") + "</th>" + STATEMENT_TYPES.map(function (type) {
+      return "<th>" + statementTabLabel(type) + "</th>";
+    }).join("");
+
+    body.innerHTML =
+      '<p class="ov-summary">' + summary + "</p>" +
+      (next
+        ? '<div class="btn-row" style="margin:0 0 8px;"><button class="btn-primary" id="ovGoto" data-ym="' + next.ym +
+          '" data-type="' + next.type + '">' + t("overviewGotoNext", { ym: next.ym, type: statementTabLabel(next.type) }) + "</button></div>"
+        : "") +
+      '<details id="ovDetails"><summary>' + t("overviewDetailsSummary", { from: rg.from, to: rg.to }) + "</summary>" +
+        '<div class="ov-filters">' +
+          '<label><input type="checkbox" id="ovShowClosed"' + (ovShowClosed ? " checked" : "") + "> " + t("overviewShowClosed") + "</label>" +
+          '<label><input type="checkbox" id="ovOnlyMissing"' + (ovOnlyMissing ? " checked" : "") + "> " + t("overviewOnlyMissing") + "</label>" +
+        "</div>" +
+        '<div class="ov-wrap table-wrap"><table class="exp-table ov-table"><thead><tr>' + head + "</tr></thead><tbody>" +
+          (rows || "<tr><td colspan='5' style='color:var(--muted);'>" + t("overviewNoRows") + "</td></tr>") +
+        "</tbody></table></div>" +
+        '<p class="desc" style="margin:6px 0 0; font-size:12px;">' + t("overviewHint") + "</p>" +
+      "</details>";
+
+    body.querySelector("#ovDetails").open = ovOpen;
+    var newWrap = body.querySelector(".ov-wrap");
+    if (newWrap) newWrap.scrollTop = keepTop;
+  }
+
+  function bindOverviewEvents() {
+    var body = document.getElementById("myChecklistBody");
+    if (!body) return;
+    body.addEventListener("click", function (e) {
+      var cell = e.target.closest(".ov-cell");
+      if (cell) { gotoCell(cell.dataset.ym, cell.dataset.type); return; }
+      var btn = e.target.closest("#ovGoto");
+      if (btn) gotoCell(btn.dataset.ym, btn.dataset.type);
+    });
+    body.addEventListener("change", function (e) {
+      if (e.target.id === "ovShowClosed") { ovShowClosed = e.target.checked; renderOverview(); }
+      if (e.target.id === "ovOnlyMissing") { ovOnlyMissing = e.target.checked; renderOverview(); }
+    });
+  }
+
+  // 현황표의 칸/버튼을 누르면 그 달·그 제표 탭으로 이동합니다.
+  function gotoCell(ym, type) {
+    flushDraftsBeforeLeave();          // 아직 서버에 못 올린 입력이 있으면 옮기기 전에 올립니다
+    ctx.yearmonth = ym;
+    window.saveContext(ctx);
+    var tabBtn = document.querySelector('#tabBar .tab-btn[data-tab="' + type + '"]');
+    if (tabBtn) tabBtn.click();
+    loadAll();
+    if (overviewMode) renderOverview();   // 현재 달 강조를 갱신
+    var bar = document.getElementById("contextBar");
+    if (bar && bar.scrollIntoView) bar.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function renderContextBar() {
     var el = document.getElementById("contextBar");
     el.innerHTML =
@@ -119,9 +352,11 @@
     });
     sel.value = ctx.yearmonth;
     sel.addEventListener("change", function () {
+      flushDraftsBeforeLeave();          // 아직 서버에 못 올린 입력이 있으면 옮기기 전에 올립니다
       ctx.yearmonth = sel.value;
       window.saveContext(ctx);
       loadAll();
+      if (overviewMode) renderOverview();   // 현황표의 현재 달 강조를 갱신
     });
   }
 
@@ -448,6 +683,7 @@
   // 임시저장에는 **콤마를 벗긴 값**만 넣습니다. 예전 초안(콤마 없던 시절)과도 형식이 같아
   // 이미 저장해둔 초안이 그대로 살아납니다.
   function saveDraftNow(type) {
+    autosavePending[type] = false;
     var values = {};
     document.querySelectorAll("#tbody_" + type + " .amt-cny").forEach(function (input) {
       values[input.dataset.code] = window.parseAmount(input.value);
@@ -476,7 +712,27 @@
   var saveTimers = {};
   function scheduleAutosave(type) {
     clearTimeout(saveTimers[type]);
+    autosavePending[type] = true;
     saveTimers[type] = setTimeout(function () { saveDraftNow(type); }, 600);
+  }
+
+  // 달을 옮기기 전에: 이 PC 자동저장 대기 중인 입력을 먼저 저장하고, 서버에 못 올린 입력은 지금 올립니다.
+  // 요청은 옮기기 전의 달 기준으로 즉시 만들어지므로(호출 시점에 ctx를 읽음) 다른 달 데이터와 섞이지 않습니다.
+  // (자동저장 대기분을 비우지 않으면, 0.6초 뒤 타이머가 "옮긴 뒤의 달" 이름으로 옛 달의 입력을 저장해 버립니다.)
+  function flushDraftsBeforeLeave() {
+    STATEMENT_TYPES.forEach(function (type) {
+      if (isLocked(type)) return;
+      if (autosavePending[type]) {
+        clearTimeout(saveTimers[type]);
+        saveDraftNow(type);
+      }
+      if (!serverDraftsEnabled) return;
+      var rec = window.loadDraft(dKey(type));
+      if (rec && rec.dirty !== false) {
+        clearTimeout(serverSaveTimers[type]);
+        pushDraft(type, false);
+      }
+    });
   }
 
   // 「임시저장」 버튼: 자동저장을 기다리지 않고 즉시 저장하고, 저장됐다는 걸 눈으로 확인시켜 줍니다.
@@ -514,6 +770,9 @@
     updateDraftInfo(type, null);
     var seq = rec._seq || 0;
     var sent = { values: rec.values || {}, compare: rec.compare || {}, extra: rec.extra || {} };
+    // 응답을 기다리는 사이 다른 달로 옮길 수 있으므로, 어느 달의 초안을 보냈는지 지금 적어 둡니다.
+    var ymAtStart = ctx.yearmonth;
+    var keyAtStart = dKey(type);
     return client.rpc("save_statement_draft", {
       p_access_key: ctx.accessKey,
       p_corp: ctx.corp,
@@ -526,33 +785,47 @@
       p_force: !!force
     }).then(function (res) {
       saveInFlight[type] = false;
-      if (res.error) return handlePushError(type, res.error);
+      var moved = ctx.yearmonth !== ymAtStart;   // 응답을 기다리는 사이 다른 달로 옮겼다
+      if (res.error) return moved ? "failed" : handlePushError(type, res.error);
       var r = res.data || {};
       if (r.conflict) {
+        // 옮긴 뒤라면 화면은 건드리지 않습니다. 그 달을 다시 열 때 서버본과 비교해 충돌 안내가 뜹니다.
+        if (moved) return "conflict";
         draftConflict[type] = r.current || null;
         draftStatus[type] = { state: "conflict" };
         updateDraftInfo(type, null);
         renderConflictBanner(type);
         return "conflict";
       }
-      draftBase[type] = r.version;
-      serverDrafts[type] = { payload: sent, savedBy: ctx.submitter, savedAt: r.savedAt, version: r.version };
-      var cur = window.loadDraft(dKey(type));
+      // 이 PC 사본은 "보냈던 달"의 것에 반영합니다(옮겼더라도).
+      var cur = window.loadDraft(keyAtStart);
       if (cur) {
         cur.baseVersion = r.version;
         if ((cur._seq || 0) === seq) cur.dirty = false;   // 보내는 사이 입력이 더 없었을 때만 "서버와 맞춤"
-        localStorage.setItem(dKey(type), JSON.stringify(cur));
+        localStorage.setItem(keyAtStart, JSON.stringify(cur));
       }
-      draftStatus[type] = { state: "synced", by: ctx.submitter, at: r.savedAt };
-      updateDraftInfo(type, null);
-      var disc = document.getElementById("draftDiscard_" + type);
-      if (disc) disc.style.display = "";
-      if (saveQueued[type]) { saveQueued[type] = false; scheduleServerSave(type, true); }
+      if (!moved) {
+        draftBase[type] = r.version;
+        serverDrafts[type] = { payload: sent, savedBy: ctx.submitter, savedAt: r.savedAt, version: r.version };
+        draftStatus[type] = { state: "synced", by: ctx.submitter, at: r.savedAt };
+        updateDraftInfo(type, null);
+        var disc = document.getElementById("draftDiscard_" + type);
+        if (disc) disc.style.display = "";
+      }
+      if (saveQueued[type]) {
+        saveQueued[type] = false;
+        // 보내는 사이 입력이 더 있었다면 한 번 더. 달을 옮긴 뒤라면 "지금 보는 달"의 미동기 초안이 있을 때만 올립니다.
+        var now = window.loadDraft(dKey(type));
+        if (now && now.dirty !== false) scheduleServerSave(type, true);
+      }
+      scheduleOverviewRefresh(1500);   // 현황표에 "작성 중"이 반영되도록
       return "ok";
     }).catch(function () {
       saveInFlight[type] = false;
-      draftStatus[type] = { state: "failed" };
-      updateDraftInfo(type, null);
+      if (ctx.yearmonth === ymAtStart) {
+        draftStatus[type] = { state: "failed" };
+        updateDraftInfo(type, null);
+      }
       return "failed";
     });
   }
@@ -614,6 +887,7 @@
       applyLockedState();
       applyPlKrExtra();
       showToast(t("draftDiscarded"));
+      scheduleOverviewRefresh();   // 현황표의 "작성 중" 칸이 "미제출"로 돌아가도록
     };
     if (!serverDraftsEnabled) { finish(); return; }
     client.rpc("delete_statement_draft", {
@@ -860,6 +1134,7 @@
       if (res.error) return;
       lockedTypes.push(type);
       applyLockedState();
+      refreshChecklistAfterSubmit();   // 위쪽 현황 카드에 방금 제출이 반영되도록
     });
   }
 
@@ -940,11 +1215,14 @@
     });
   }
 
+  var loadSeq = 0;   // 불러오기 번호: 달을 빠르게 옮길 때 늦게 도착한 옛 달의 응답이 화면을 덮어쓰지 않도록
+
   function loadAll() {
     if (!client) {
       showToast(t("submitFail"));
       return;
     }
+    var mySeq = ++loadSeq;
     existingLines = {};
     lockedTypes = [];
     plKrExtra = {};
@@ -965,6 +1243,7 @@
       client.rpc("get_statement_drafts", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
         .then(function (r) { return r; }, function () { return { error: { message: "network" } }; })
     ]).then(function (results) {
+      if (mySeq !== loadSeq) return;   // 그 사이 더 새로운 불러오기가 시작됐다 → 이 응답은 버립니다
       accounts = (results[0].data || []).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
       STATEMENT_TYPES.forEach(function (type) {
         formulaPlans[type] = window.buildFormulaPlan(accounts, type);
@@ -1007,15 +1286,21 @@
   document.addEventListener("DOMContentLoaded", function () {
     bindTabs();
     bindPanelEvents();
+    bindOverviewEvents();
     loadAll();
-    renderMyChecklist();
+    refreshOverview();
     document.addEventListener("langchange", function () {
       renderContextBar();
       renderPanels();
       applyClosedState();
       applyLockedState();
       applyPlKrExtra();
-      renderMyChecklist();
+      if (overviewMode) {
+        setChecklistHeading(true);
+        renderOverview();
+      } else {
+        renderMyChecklist();
+      }
     });
   });
 })();

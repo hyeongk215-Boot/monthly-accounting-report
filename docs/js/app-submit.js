@@ -16,6 +16,20 @@
   var plKrExtra = {};         // { headcount, entertainmentCny } (get_pl_kr_extra 프리필)
   var staleDraftTypes = {};   // type -> true: 이미 제출돼 잠긴 탭이라 이 PC의 옛 임시저장본을 버린 경우(안내 표시용)
 
+  // ===== 서버 공유 임시저장 (2단계) =====
+  // 임시저장을 서버(acct_statement_drafts)에 두어 같은 지점 키로 들어온 사람은 누구나 볼 수 있게 합니다.
+  // 서버 함수가 아직 배포되지 않았거나 호출이 실패하면 serverDraftsEnabled=false 로 남아, 예전처럼
+  // 이 PC(localStorage)에만 저장합니다. 그래서 SQL 배포 전/후 어느 쪽이든 화면이 깨지지 않습니다.
+  var serverDraftsEnabled = false;
+  var serverDrafts = {};      // type -> { payload, savedBy, savedAt, version } (서버가 가진 임시저장)
+  var draftBase = {};         // type -> 내가 마지막으로 읽거나 저장한 서버 version (없으면 null)
+  var draftConflict = {};     // type -> 서버에 더 새로 저장된 다른 사람의 임시저장(충돌 안내용)
+  var draftStatus = {};       // type -> { state: 'synced'|'saving'|'failed'|'conflict', by, at }
+  var saveInFlight = {};      // type -> true: 서버 저장 요청이 진행 중
+  var saveQueued = {};        // type -> true: 진행 중에 입력이 더 있어 끝나면 한 번 더 저장해야 함
+  var serverSaveTimers = {};
+  var SERVER_SAVE_DELAY = 3000;   // 마지막 입력 후 3초 뒤 서버에 저장(키 입력마다 보내지 않기 위함)
+
   // ===== 자동계산 (阶段一 · 财务报表自动计算 方案 v5) =====
   var formulaPlans = {};      // type -> 위상정렬된 공식 목록 (buildFormulaPlan)
   var calcModes = {};         // type -> 'auto' | 'legacy'
@@ -163,7 +177,8 @@
   // renderPanels()가 패널 innerHTML을 통째로 다시 만들기 때문에(언어 전환 포함) 렌더 뒤에는
   // 항상 이 함수를 다시 불러야 값이 날아가지 않습니다.
   function applyPlKrExtra() {
-    var draft = window.loadDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, "PL_KR"));
+    // 잠긴 탭의 보완입력은 이 PC의 초안(서버 공유 대상 아님), 잠기지 않은 탭은 pickDraft(서버 임시저장 포함)를 봅니다.
+    var draft = isLocked("PL_KR") ? window.loadDraft(dKey("PL_KR")) : pickDraft("PL_KR");
     var draftExtra = (draft && draft.extra) || {};
     var locked = isLocked("PL_KR");
     var closed = closedMonths.indexOf(ctx.yearmonth) !== -1;
@@ -202,6 +217,16 @@
         '<div class="note-box" id="rateNote_' + type + '" style="display:none;">' + t("rateUnsetNote") + "</div>" +
         '<div class="note-box" id="lockNote_' + type + '" style="display:none;">' + t("submissionLockedBanner") + "</div>" +
         '<div class="note-box" id="staleNote_' + type + '" style="display:none;">' + t("staleDraftNote") + "</div>" +
+        // 서버에 임시저장된 내용을 불러왔을 때 "누가·언제 저장했는지" 알려 줍니다(다른 담당자의 입력이 보이는 이유).
+        '<div class="note-box" id="draftOwner_' + type + '" style="display:none;"></div>' +
+        // 내가 입력하는 사이 다른 사람이 서버에 먼저 저장했을 때: 어느 쪽을 쓸지 고르게 합니다.
+        '<div class="note-box" id="draftConflict_' + type + '" style="display:none;">' +
+          '<span class="conflict-msg"></span>' +
+          '<div class="btn-row" style="margin:8px 0 0;">' +
+            '<button class="btn-primary" data-action="conflict-server" data-type="' + type + '">' + t("draftConflictTakeServer") + "</button>" +
+            '<button class="btn-secondary" data-action="conflict-mine" data-type="' + type + '">' + t("draftConflictKeepMine") + "</button>" +
+          "</div>" +
+        "</div>" +
         '<div class="note-box" id="calcNote_' + type + '" style="display:none;">' + t("calcAutoNote") + "</div>" +
         '<div class="note-box" id="legacyNote_' + type + '" style="display:none;">' + t("calcLegacyNote") + "</div>" +
         (type === "PL_KR" ? plKrExtraHtml() : "") +
@@ -219,10 +244,13 @@
           '<button class="btn-primary" data-action="submit" data-type="' + type + '">' + t("submitTabBtn") + "</button>" +
           '<button class="btn-secondary" data-action="draft" data-type="' + type + '" title="' + t("draftLocalNote") + '">' +
             t("draftSaveBtn") + "</button>" +
+          '<button class="btn-secondary" id="draftDiscard_' + type + '" data-action="discard" data-type="' + type + '" style="display:none;">' +
+            t("draftDiscardBtn") + "</button>" +
           '<span class="draft-info" id="draftInfo_' + type + '"></span>' +
         "</div>" +
-        // 마우스를 올려야 보이는 툴팁만으로는 "다른 사람도 보겠지"라는 오해를 막지 못해 상시 문구로 둡니다.
-        '<p style="margin:6px 0 0; font-size:12px; color:var(--muted);">' + t("draftScopeNote") + "</p>" +
+        // 임시저장이 어디에 저장되는지(서버 공유 / 이 PC뿐)를 툴팁이 아니라 상시 문구로 알려 "다른 사람도 보겠지"라는 오해를 막습니다.
+        '<p style="margin:6px 0 0; font-size:12px; color:var(--muted);">' +
+          t(serverDraftsEnabled ? "draftScopeNoteServer" : "draftScopeNote") + "</p>" +
       "</div>"
     );
   }
@@ -235,19 +263,31 @@
   function renderTable(type) {
     var tbody = document.getElementById("tbody_" + type);
     var rows = accounts.filter(function (a) { return a.statementType === type; });
-    var dKey = window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type);
-    var draft = window.loadDraft(dKey);
-    // 제출이 끝나 잠긴 탭은 언제나 서버 값을 보여줍니다. 이 PC에 남아 있던 옛 초안(표의 values/compare)은
-    // 쓰지 않고 지웁니다. 초안을 우선하면 다른 사람이 제출한 뒤에도 이 PC의 초안(빈 칸·옛 숫자)이 제출된
-    // 값을 가려서 "제출했는데 안 보인다"가 됩니다. 단 PL(한국)의 보완입력용 extra는 남겨 둡니다.
-    if (isLocked(type) && draft && (draft.values || draft.compare)) {
-      if (draft.extra) {
-        localStorage.setItem(dKey, JSON.stringify({ extra: draft.extra, _savedAt: draft._savedAt }));
-      } else {
-        window.clearDraft(dKey);
+    var draft;
+    if (isLocked(type)) {
+      // 제출이 끝나 잠긴 탭은 언제나 서버 값을 보여줍니다. 이 PC에 남아 있던 옛 초안(표의 values/compare)은
+      // 쓰지 않고 지웁니다. 초안을 우선하면 다른 사람이 제출한 뒤에도 이 PC의 초안(빈 칸·옛 숫자)이 제출된
+      // 값을 가려서 "제출했는데 안 보인다"가 됩니다. 단 PL(한국)의 보완입력용 extra는 남겨 둡니다.
+      var dkey = dKey(type);
+      draft = window.loadDraft(dkey);
+      if (draft && (draft.values || draft.compare)) {
+        if (draft.extra) {
+          localStorage.setItem(dkey, JSON.stringify({ extra: draft.extra, _savedAt: draft._savedAt }));
+        } else {
+          window.clearDraft(dkey);
+        }
+        draft = null;
+        staleDraftTypes[type] = true;
       }
-      draft = null;
-      staleDraftTypes[type] = true;
+    } else {
+      // 잠기지 않은 탭: 이 PC의 미전송 입력 > 서버 임시저장 순으로 고릅니다(pickDraft 참고).
+      draft = pickDraft(type);
+    }
+    if (serverDraftsEnabled && draft && draft.source === "server" && serverDrafts[type]) {
+      var cs = draftStatus[type];
+      if (!cs || cs.state === "synced") {
+        draftStatus[type] = { state: "synced", by: serverDrafts[type].savedBy, at: serverDrafts[type].savedAt };
+      }
     }
     // 초안에 담아둔 대조값을 되살립니다(업로드 후 새로고침해도 경고가 유지되도록).
     compareValues[type] = (draft && draft.compare) || compareValues[type] || {};
@@ -276,6 +316,22 @@
     updateDraftInfo(type, draft);
     var staleNote = document.getElementById("staleNote_" + type);
     if (staleNote) staleNote.style.display = staleDraftTypes[type] ? "block" : "none";
+    // 서버 임시저장을 불러온 경우 누가·언제 저장했는지 알려 줍니다.
+    var ownerNote = document.getElementById("draftOwner_" + type);
+    if (ownerNote) {
+      var fromServer = !!(draft && draft.source === "server" && serverDrafts[type]);
+      ownerNote.style.display = fromServer ? "block" : "none";
+      if (fromServer) {
+        ownerNote.textContent = t("draftLoadedFromServer", {
+          by: serverDrafts[type].savedBy || "", time: window.formatSavedAt(serverDrafts[type].savedAt)
+        });
+      }
+    }
+    var discardBtn = document.getElementById("draftDiscard_" + type);
+    if (discardBtn) {
+      discardBtn.style.display = (serverDraftsEnabled && !isLocked(type) && (draft || serverDrafts[type])) ? "" : "none";
+    }
+    renderConflictBanner(type);
     var rateNote = document.getElementById("rateNote_" + type);
     if (rateNote) rateNote.style.display = exchangeRate ? "none" : "block";
     var calcNote = document.getElementById("calcNote_" + type);
@@ -336,12 +392,57 @@
     return Math.round(n * exchangeRate).toLocaleString();
   }
 
+  // 임시저장 칩. 서버 공유가 켜져 있으면 저장 상태(저장 중/서버에 저장됨/실패/충돌)를, 아니면 이 PC의
+  // 마지막 임시저장 시각을 보여줍니다.
   function updateDraftInfo(type, draft) {
     var el = document.getElementById("draftInfo_" + type);
     if (!el) return;
-    el.textContent = draft && draft._savedAt
-      ? "💾 " + t("draftSavedAt") + ": " + window.formatSavedAt(draft._savedAt)
-      : "";   // 비어 있으면 CSS의 .draft-info:empty 가 칩을 통째로 숨깁니다.
+    var st = serverDraftsEnabled ? draftStatus[type] : null;
+    var text = "";
+    if (st && st.state === "saving") text = "💾 " + t("draftChipSaving");
+    else if (st && st.state === "failed") text = "⚠ " + t("draftChipFailed");
+    else if (st && st.state === "conflict") text = "⚠ " + t("draftChipConflict");
+    else if (st && st.state === "synced" && st.at) {
+      text = "💾 " + t("draftChipServer", { by: st.by || "", time: window.formatSavedAt(st.at) });
+    } else if (draft && draft._savedAt) {
+      text = "💾 " + t("draftSavedAt") + ": " + window.formatSavedAt(draft._savedAt);
+    }
+    el.textContent = text;   // 비어 있으면 CSS의 .draft-info:empty 가 칩을 통째로 숨깁니다.
+  }
+
+  function dKey(type) {
+    return window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type);
+  }
+
+  // 화면에 그릴 임시저장을 고릅니다. { values, compare, extra, _savedAt, source: 'local'|'server' } 또는 null.
+  //  - 서버 공유가 꺼져 있으면(함수 미배포/실패) 예전처럼 이 PC의 초안만 씁니다.
+  //  - 이 PC에 "아직 서버에 못 올린" 입력(dirty)이 있으면 그것이 가장 최신이라 우선합니다.
+  //    dirty 표시가 없는 옛 초안(1단계까지 만든 초안)도 서버에 올라간 적이 없으니 같은 취급입니다.
+  //  - 그 외에는 서버의 임시저장을 씁니다. 이미 서버와 맞춘 이 PC의 사본은 서버에 없으면 버립니다.
+  function pickDraft(type) {
+    var local = window.loadDraft(dKey(type));
+    if (!serverDraftsEnabled) return local;
+    if (local && local.dirty !== false) {
+      local.source = "local";
+      return local;
+    }
+    var srv = serverDrafts[type];
+    if (srv) {
+      var p = srv.payload || {};
+      return { values: p.values || {}, compare: p.compare || {}, extra: p.extra || {}, _savedAt: srv.savedAt, source: "server" };
+    }
+    return null;
+  }
+
+  function renderConflictBanner(type) {
+    var box = document.getElementById("draftConflict_" + type);
+    if (!box) return;
+    var c = serverDraftsEnabled ? draftConflict[type] : null;
+    if (!c) { box.style.display = "none"; return; }
+    box.querySelector(".conflict-msg").textContent = t("draftConflictMsg", {
+      by: c.savedBy || "", time: window.formatSavedAt(c.savedAt)
+    });
+    box.style.display = "block";
   }
 
   // 임시저장에는 **콤마를 벗긴 값**만 넣습니다. 예전 초안(콤마 없던 시절)과도 형식이 같아
@@ -359,8 +460,17 @@
         if (f.el) payload.extra[f.id] = window.parseAmount(f.el.value);
       });
     }
-    var saved = window.saveDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type), payload);
+    // 서버 공유가 켜져 있으면 "서버에 아직 못 올린 입력"임을 표시합니다. baseVersion은 내가 마지막으로 본 서버 version,
+    // _seq는 서버로 보내는 사이 입력이 더 있었는지 가려내는 번호입니다.
+    if (serverDraftsEnabled) {
+      var prev = window.loadDraft(dKey(type));
+      payload.baseVersion = draftBase[type] == null ? null : draftBase[type];
+      payload.dirty = true;
+      payload._seq = ((prev && prev._seq) || 0) + 1;
+    }
+    var saved = window.saveDraft(dKey(type), payload);
     updateDraftInfo(type, { _savedAt: saved });
+    if (serverDraftsEnabled && !isLocked(type)) scheduleServerSave(type, false);
   }
 
   var saveTimers = {};
@@ -372,8 +482,203 @@
   // 「임시저장」 버튼: 자동저장을 기다리지 않고 즉시 저장하고, 저장됐다는 걸 눈으로 확인시켜 줍니다.
   function saveDraftManual(type) {
     clearTimeout(saveTimers[type]);
-    saveDraftNow(type);
-    showToast(t("draftSaved"));
+    saveDraftNow(type);                       // 이 PC에는 즉시 저장하고(서버 저장은 예약됨)
+    if (!serverDraftsEnabled || isLocked(type)) {
+      showToast(t("draftSaved"));
+      return;
+    }
+    clearTimeout(serverSaveTimers[type]);     // 예약을 기다리지 않고 지금 서버에도 저장합니다
+    pushDraft(type, false).then(function (result) {
+      if (result === "ok") showToast(t("draftSavedServer"));
+      else if (result === "conflict" || draftConflict[type]) showToast(t("draftToastConflict"));
+      else if (result === "failed") showToast(t("draftSavedLocalOnly"));
+      else showToast(t("draftSavedServer"));  // 진행 중인 저장에 이어붙은 경우
+    });
+  }
+
+  function scheduleServerSave(type, immediate) {
+    clearTimeout(serverSaveTimers[type]);
+    serverSaveTimers[type] = setTimeout(function () { pushDraft(type, false); }, immediate ? 0 : SERVER_SAVE_DELAY);
+  }
+
+  // 이 PC에 저장된 초안을 서버에 올립니다. 결과: 'ok' | 'conflict' | 'failed' | 'skipped'
+  function pushDraft(type, force) {
+    if (!serverDraftsEnabled || isLocked(type)) return Promise.resolve("skipped");
+    var rec = window.loadDraft(dKey(type));
+    if (!rec) return Promise.resolve("skipped");
+    if (draftConflict[type] && !force) return Promise.resolve("skipped");   // 충돌을 해결하기 전에는 덮어쓰지 않습니다
+    if (saveInFlight[type]) { saveQueued[type] = true; return Promise.resolve("skipped"); }
+
+    saveInFlight[type] = true;
+    draftStatus[type] = { state: "saving" };
+    updateDraftInfo(type, null);
+    var seq = rec._seq || 0;
+    var sent = { values: rec.values || {}, compare: rec.compare || {}, extra: rec.extra || {} };
+    return client.rpc("save_statement_draft", {
+      p_access_key: ctx.accessKey,
+      p_corp: ctx.corp,
+      p_office: ctx.office,
+      p_yearmonth: ctx.yearmonth,
+      p_statement_type: type,
+      p_saved_by: ctx.submitter,
+      p_payload: sent,
+      p_base_version: draftBase[type] == null ? null : draftBase[type],
+      p_force: !!force
+    }).then(function (res) {
+      saveInFlight[type] = false;
+      if (res.error) return handlePushError(type, res.error);
+      var r = res.data || {};
+      if (r.conflict) {
+        draftConflict[type] = r.current || null;
+        draftStatus[type] = { state: "conflict" };
+        updateDraftInfo(type, null);
+        renderConflictBanner(type);
+        return "conflict";
+      }
+      draftBase[type] = r.version;
+      serverDrafts[type] = { payload: sent, savedBy: ctx.submitter, savedAt: r.savedAt, version: r.version };
+      var cur = window.loadDraft(dKey(type));
+      if (cur) {
+        cur.baseVersion = r.version;
+        if ((cur._seq || 0) === seq) cur.dirty = false;   // 보내는 사이 입력이 더 없었을 때만 "서버와 맞춤"
+        localStorage.setItem(dKey(type), JSON.stringify(cur));
+      }
+      draftStatus[type] = { state: "synced", by: ctx.submitter, at: r.savedAt };
+      updateDraftInfo(type, null);
+      var disc = document.getElementById("draftDiscard_" + type);
+      if (disc) disc.style.display = "";
+      if (saveQueued[type]) { saveQueued[type] = false; scheduleServerSave(type, true); }
+      return "ok";
+    }).catch(function () {
+      saveInFlight[type] = false;
+      draftStatus[type] = { state: "failed" };
+      updateDraftInfo(type, null);
+      return "failed";
+    });
+  }
+
+  function handlePushError(type, err) {
+    var msg = String((err && err.message) || "");
+    var code = String((err && err.code) || "");
+    if (code === "PGRST202" || msg.indexOf("Could not find the function") !== -1) {
+      // 서버 함수가 아직 없다 → 예전처럼 이 PC에만 저장하는 방식으로 되돌립니다.
+      serverDraftsEnabled = false;
+      delete draftStatus[type];
+      updateDraftInfo(type, window.loadDraft(dKey(type)));
+      return "failed";
+    }
+    if (msg.indexOf("submission_locked") !== -1) {
+      // 그 사이 다른 사람이 이 탭을 제출했다 → 제출된 값을 다시 불러옵니다.
+      showToast(t("draftToastLocked"));
+      loadAll();
+      return "failed";
+    }
+    if (msg.indexOf("month_closed") !== -1) {
+      closedMonths.push(ctx.yearmonth);
+      applyClosedState();
+      showToast(t("submitFailClosed"));
+    }
+    draftStatus[type] = { state: "failed" };
+    updateDraftInfo(type, null);
+    return "failed";
+  }
+
+  // 제출에 성공했으니 서버의 임시저장은 필요 없습니다. 지우기에 실패해도 서버가 "마지막 제출보다 오래된 초안"을
+  // 조회에서 걸러 주므로 치명적이지 않습니다.
+  function discardServerDraft(type) {
+    clearTimeout(serverSaveTimers[type]);
+    delete serverDrafts[type];
+    delete draftConflict[type];
+    delete draftStatus[type];
+    draftBase[type] = null;
+    if (!serverDraftsEnabled) return;
+    client.rpc("delete_statement_draft", {
+      p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office,
+      p_yearmonth: ctx.yearmonth, p_statement_type: type
+    }).then(function () {}, function () {});
+  }
+
+  // 「임시저장 지우기」: 서버와 이 PC의 임시저장을 모두 지우고 서버에 제출된 값(없으면 빈 표)으로 되돌립니다.
+  function discardDraft(type) {
+    if (!confirm(t("draftDiscardConfirm"))) return;
+    clearTimeout(saveTimers[type]);
+    clearTimeout(serverSaveTimers[type]);
+    var finish = function () {
+      window.clearDraft(dKey(type));
+      delete serverDrafts[type];
+      delete draftConflict[type];
+      delete draftStatus[type];
+      draftBase[type] = null;
+      renderPanels();
+      applyClosedState();
+      applyLockedState();
+      applyPlKrExtra();
+      showToast(t("draftDiscarded"));
+    };
+    if (!serverDraftsEnabled) { finish(); return; }
+    client.rpc("delete_statement_draft", {
+      p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office,
+      p_yearmonth: ctx.yearmonth, p_statement_type: type
+    }).then(function (res) {
+      if (res.error) { showToast(t("submitFail")); return; }
+      finish();
+    }).catch(function () { showToast(t("submitFail")); });
+  }
+
+  // 충돌: 서버에 있는 다른 사람의 임시저장본을 가져옵니다(이 PC의 입력은 버려집니다).
+  function resolveConflictTakeServer(type) {
+    var c = draftConflict[type];
+    if (!c) return;
+    window.clearDraft(dKey(type));
+    serverDrafts[type] = c;
+    draftBase[type] = c.version;
+    delete draftConflict[type];
+    draftStatus[type] = { state: "synced", by: c.savedBy, at: c.savedAt };
+    renderPanels();
+    applyClosedState();
+    applyLockedState();
+    applyPlKrExtra();
+  }
+
+  // 충돌: 내 입력으로 덮어씁니다.
+  function resolveConflictKeepMine(type) {
+    var c = draftConflict[type];
+    if (!c) return;
+    draftBase[type] = c.version;
+    delete draftConflict[type];
+    var rec = window.loadDraft(dKey(type));
+    if (rec) {
+      rec.baseVersion = c.version;
+      rec.dirty = true;
+      localStorage.setItem(dKey(type), JSON.stringify(rec));
+    }
+    renderConflictBanner(type);
+    pushDraft(type, true).then(function (result) {
+      if (result === "ok") showToast(t("draftSavedServer"));
+    });
+  }
+
+  // 화면을 그린 직후: 이 PC에 서버로 못 올린 입력이 있으면 올리고, 서버에 더 새로운 저장본이 있으면 충돌을 알립니다.
+  function syncDraftsAfterLoad() {
+    if (!serverDraftsEnabled) return;
+    STATEMENT_TYPES.forEach(function (type) {
+      if (isLocked(type)) return;
+      var rec = window.loadDraft(dKey(type));
+      var srv = serverDrafts[type];
+      if (!rec) return;
+      if (rec.dirty === false) {
+        if (!srv) window.clearDraft(dKey(type));   // 서버에서 사라진 초안의 사본은 버립니다
+        return;
+      }
+      if (srv && rec.baseVersion !== srv.version) {
+        draftConflict[type] = srv;
+        draftStatus[type] = { state: "conflict" };
+        updateDraftInfo(type, rec);
+        renderConflictBanner(type);
+        return;
+      }
+      scheduleServerSave(type, true);
+    });
   }
 
   function bindPanelEvents() {
@@ -402,6 +707,9 @@
       if (action === "upload") uploadFile(type);
       if (action === "submit") submitTab(type);
       if (action === "draft") saveDraftManual(type);
+      if (action === "discard") discardDraft(type);
+      if (action === "conflict-server") resolveConflictTakeServer(type);
+      if (action === "conflict-mine") resolveConflictKeepMine(type);
       if (action === "backfill") backfillPlKrExtra();
     });
   }
@@ -525,7 +833,9 @@
         }
         return;
       }
+      clearTimeout(saveTimers[type]);
       window.clearDraft(window.draftKey(ctx.corp, ctx.office, ctx.yearmonth, ctx.submitter, type));
+      discardServerDraft(type);
       updateDraftInfo(type, null);
       if (type === "PL_KR") {
         submitPlKrExtra();
@@ -641,13 +951,19 @@
     calcModes = {};
     compareValues = {};
     staleDraftTypes = {};
+    // 달을 바꾸거나 다시 불러올 때 예약돼 있던 서버 저장은 취소합니다(옛 달의 입력은 이 PC에 dirty로 남아 있다가
+    // 그 달을 다시 열 때 서버에 올라갑니다).
+    STATEMENT_TYPES.forEach(function (type) { clearTimeout(serverSaveTimers[type]); });
     Promise.all([
       client.rpc("get_accounts", {}),
       client.rpc("get_statement", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
       client.rpc("get_exchange_rate", { p_yearmonth: ctx.yearmonth }),
       window.fetchClosedMonths(),
       client.rpc("get_pl_kr_extra", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
-      client.rpc("get_submission_locks", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
+      client.rpc("get_submission_locks", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth }),
+      // 서버 공유 임시저장(2단계). 함수가 아직 없거나 실패해도 화면 전체가 실패하지 않도록 오류를 값으로 돌려받습니다.
+      client.rpc("get_statement_drafts", { p_access_key: ctx.accessKey, p_corp: ctx.corp, p_office: ctx.office, p_yearmonth: ctx.yearmonth })
+        .then(function (r) { return r; }, function () { return { error: { message: "network" } }; })
     ]).then(function (results) {
       accounts = (results[0].data || []).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
       STATEMENT_TYPES.forEach(function (type) {
@@ -665,11 +981,24 @@
       closedMonths = results[3] || [];
       plKrExtra = results[4].data || {};
       lockedTypes = results[5].data || [];
+      var dr = results[6] || {};
+      serverDraftsEnabled = !dr.error && Array.isArray(dr.data);
+      serverDrafts = {};
+      draftBase = {};
+      draftConflict = {};
+      draftStatus = {};
+      if (serverDraftsEnabled) {
+        dr.data.forEach(function (d) {
+          serverDrafts[d.statementType] = d;
+          draftBase[d.statementType] = d.version;
+        });
+      }
       renderContextBar();
       renderPanels();
       applyClosedState();
       applyLockedState();
       applyPlKrExtra();
+      syncDraftsAfterLoad();
     }).catch(function () {
       showToast(t("submitFail"));
     });

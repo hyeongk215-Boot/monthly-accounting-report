@@ -203,6 +203,8 @@ begin
   return v_count;
 end;
 $func$;
+REVOKE EXECUTE ON FUNCTION submit_statement(text, text, text, text, text, text, jsonb) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION submit_statement(text, text, text, text, text, text, jsonb) TO anon;
 
 create or replace function replace_accounts(p_access_key text, p_accounts jsonb) returns integer
 language plpgsql security definer set search_path = public
@@ -238,6 +240,8 @@ begin
   return v_count;
 end;
 $func$;
+REVOKE EXECUTE ON FUNCTION replace_accounts(text, jsonb) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION replace_accounts(text, jsonb) TO anon;
 */
 -- ⚠ 위 replace_accounts 구버전은 formula 를 보존하지 않습니다. 이걸 되살린 뒤
 --    관리화면에서 계정 엑셀을 올리면 공식이 전부 지워집니다(0-1 백업으로 복구 가능).

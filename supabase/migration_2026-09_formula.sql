@@ -190,7 +190,7 @@ begin
   return v_vals;
 end;
 $$;
-revoke all on function acct_eval_formulas(text, jsonb) from anon, authenticated;
+revoke all on function acct_eval_formulas(text, jsonb) from PUBLIC, anon, authenticated;
 
 -- =====================================================================
 -- 4. get_accounts: formula 컬럼 노출
@@ -397,7 +397,7 @@ begin
   return v_count;
 end;
 $$;
-revoke all on function set_calc_mode(text, text, text, text, text, text) from anon, authenticated;
+revoke all on function set_calc_mode(text, text, text, text, text, text) from PUBLIC, anon, authenticated;
 
 -- =====================================================================
 -- 8. 기존 데이터 백필 (v5 5.2 구간별 처리)
@@ -473,7 +473,8 @@ begin
 end;
 $$;
 
-grant execute on function set_calc_mode(text, text, text, text, text, text) to anon, authenticated;
+REVOKE EXECUTE ON FUNCTION set_calc_mode(text, text, text, text, text, text) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION set_calc_mode(text, text, text, text, text, text) TO anon;
 
 -- =====================================================================
 -- 검증 쿼리 — 실행 후 아래 3건을 반드시 확인하십시오
@@ -506,3 +507,12 @@ select calc_mode as "계산모드", min(yearmonth) as "최초월", max(yearmonth
   from acct_statement_lines
  group by calc_mode
  order by 1;
+
+REVOKE EXECUTE ON FUNCTION public.get_accounts() FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_accounts() TO anon;
+REVOKE EXECUTE ON FUNCTION public.get_statement(text, text, text, text) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_statement(text, text, text, text) TO anon;
+REVOKE EXECUTE ON FUNCTION public.submit_statement(text, text, text, text, text, text, jsonb) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_statement(text, text, text, text, text, text, jsonb) TO anon;
+REVOKE EXECUTE ON FUNCTION public.replace_accounts(text, jsonb) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.replace_accounts(text, jsonb) TO anon;

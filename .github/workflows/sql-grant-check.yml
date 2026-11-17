@@ -1,0 +1,9 @@
+name: SQL function grants
+on:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_function_grants.py

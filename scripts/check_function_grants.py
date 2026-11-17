@@ -1,5 +1,28 @@
 #!/usr/bin/env python3
-"""Check explicit function privileges in repository SQL using lexical parsing."""
+"""Check explicit function privileges in repository SQL using lexical parsing.
+
+Scope and limitations:
+- Uses only pathlib, re, and sys for lexical and statement-level parsing; this
+  is not a complete SQL parser.
+- Quotes, dollar-quoted bodies, and comments are indivisible tokens. SQL inside
+  function bodies or DO blocks, including EXECUTE and format() dynamic SQL,
+  is not analyzed.
+- Recognizes CREATE FUNCTION and CREATE OR REPLACE FUNCTION, and GRANT/REVOKE
+  statements with ON FUNCTION and EXECUTE or ALL. Table, sequence, and schema
+  privileges and ALTER DEFAULT PRIVILEGES are not checked.
+- Reads only *.sql under the repository's supabase directory, skipping paths
+  with a component exactly named worker. Live database state, default
+  privileges, and whether statements were applied are not checked.
+- Each created INTERNAL function needs a matching REVOKE covering PUBLIC,
+  anon, and authenticated in the same file. Other created functions need a
+  matching GRANT/REVOKE or a signature in a comment containing '부여 없음'.
+  CREATE and privilege statement order within a file is not checked.
+- GRANT to PUBLIC or authenticated is rejected; GRANT to anon is also rejected
+  for INTERNAL functions. Matching uses schema, function name, and argument
+  types, with public as the default schema.
+- ValueError or IndexError during parsing is reported as a file error. Other
+  unsupported SQL may be ignored; successful parsing does not prove SQL validity.
+"""
 from pathlib import Path
 import re
 import sys

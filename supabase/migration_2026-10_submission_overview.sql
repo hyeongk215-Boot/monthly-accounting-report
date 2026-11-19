@@ -100,7 +100,8 @@ begin
 end;
 $$;
 
-grant execute on function get_submission_overview(text, text, text, text, text) to anon, authenticated;
+REVOKE EXECUTE ON FUNCTION get_submission_overview(text, text, text, text, text) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION get_submission_overview(text, text, text, text, text) TO anon;
 
 -- PostgREST가 새 함수를 바로 인식하도록 스키마 캐시를 갱신
 notify pgrst, 'reload schema';

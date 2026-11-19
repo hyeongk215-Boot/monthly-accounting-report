@@ -234,9 +234,12 @@ begin
 end;
 $$;
 
-grant execute on function get_statement_drafts(text, text, text, text) to anon, authenticated;
-grant execute on function save_statement_draft(text, text, text, text, text, text, jsonb, integer, boolean) to anon, authenticated;
-grant execute on function delete_statement_draft(text, text, text, text, text) to anon, authenticated;
+REVOKE EXECUTE ON FUNCTION get_statement_drafts(text, text, text, text) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION get_statement_drafts(text, text, text, text) TO anon;
+REVOKE EXECUTE ON FUNCTION save_statement_draft(text, text, text, text, text, text, jsonb, integer, boolean) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION save_statement_draft(text, text, text, text, text, text, jsonb, integer, boolean) TO anon;
+REVOKE EXECUTE ON FUNCTION delete_statement_draft(text, text, text, text, text) FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION delete_statement_draft(text, text, text, text, text) TO anon;
 
 -- PostgREST가 새 함수를 바로 인식하도록 스키마 캐시를 갱신 (Supabase는 DDL 뒤 자동 갱신도 하지만 확실히 하기 위함)
 notify pgrst, 'reload schema';
